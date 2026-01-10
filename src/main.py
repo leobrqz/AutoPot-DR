@@ -3,11 +3,14 @@ Main application entry point.
 Initializes overlay, process detection, and hotkey handling.
 """
 import sys
+import os
 import threading
 import time
 import psutil
+import ctypes
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtCore import QTimer, pyqtSignal, QObject
+from PyQt5.QtGui import QIcon
 import keyboard
 
 from config import Config
@@ -129,8 +132,37 @@ class HotkeyManager:
         self.app.quit()
 
 
+def get_resource_path(relative_path):
+    """
+    Get absolute path to resource, works for dev and PyInstaller.
+    
+    Args:
+        relative_path: Path relative to project root (e.g., "imgs/icon.ico")
+    
+    Returns:
+        Absolute path to the resource
+    """
+    try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = sys._MEIPASS
+    except AttributeError:
+        # Running in development mode
+        base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    
+    return os.path.join(base_path, relative_path)
+
+
 def main():
     """Main application entry point."""
+    # Set Windows AppUserModelID for proper taskbar icon (Windows only)
+    # This is critical for Windows to show the correct icon in taskbar
+    if sys.platform == 'win32':
+        try:
+            myappid = 'com.autopot.dr.1.0.0'
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+        except Exception:
+            pass  # Fail silently if not on Windows or if it fails
+    
     # Create QApplication
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
@@ -142,6 +174,25 @@ def main():
     # Create overlay window
     print("Creating overlay window...")
     overlay = OverlayWindow(config)
+    overlay.setWindowTitle("AutoPot-DR")
+    
+    # Set application and window icon (works in .exe, may not work in dev mode)
+    # For .exe: PyInstaller embeds icon via --icon flag, this sets it at runtime
+    # For dev: Icon may not appear (that's okay per requirements)
+    try:
+        # Try to load icon from bundled resources (PyInstaller)
+        icon_path = get_resource_path("imgs/icon.ico")
+        if not os.path.exists(icon_path):
+            icon_path = get_resource_path("imgs/icon.png")
+        
+        if os.path.exists(icon_path):
+            icon = QIcon(icon_path)
+            app.setWindowIcon(icon)
+            overlay.setWindowIcon(icon)
+    except Exception:
+        # Icon loading failed (expected in dev mode, should work in .exe)
+        pass
+    
     overlay.show()
     
     # Initialize process detector

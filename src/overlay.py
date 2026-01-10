@@ -41,31 +41,32 @@ class OverlayWindow(QWidget):
         
         # Status label
         self.status_label = QLabel("WAITING")
-        self.status_label.setStyleSheet("font-size: 14px; font-weight: bold;")
+        self.status_label.setStyleSheet("font-size: 14px; font-weight: bold; background-color: transparent;")
         self._update_status_display()
         layout.addWidget(self.status_label)
         
         # Threshold label
         threshold = self.config.get_health_threshold()
         self.threshold_label = QLabel(f"Threshold: {threshold}%")
-        self.threshold_label.setStyleSheet("font-size: 12px; color: #CCCCCC;")
+        self.threshold_label.setStyleSheet("font-size: 12px; color: #CCCCCC; background-color: transparent;")
         layout.addWidget(self.threshold_label)
         
         # Spacer
         spacer = QLabel("")
         spacer.setFixedHeight(5)
+        spacer.setStyleSheet("background-color: transparent;")
         layout.addWidget(spacer)
         
         # Potion log label
         log_header = QLabel("Potion Log:")
-        log_header.setStyleSheet("font-size: 11px; font-weight: bold; color: #CCCCCC;")
+        log_header.setStyleSheet("font-size: 11px; font-weight: bold; color: #CCCCCC; background-color: transparent;")
         layout.addWidget(log_header)
         
         # Potion log entries (5 labels)
         self.log_labels = []
         for i in range(5):
             log_label = QLabel("")
-            log_label.setStyleSheet("font-size: 10px; color: #AAAAAA;")
+            log_label.setStyleSheet("font-size: 10px; color: #AAAAAA; background-color: transparent;")
             log_label.setFixedHeight(15)
             layout.addWidget(log_label)
             self.log_labels.append(log_label)
@@ -84,10 +85,10 @@ class OverlayWindow(QWidget):
         """Configure window properties for overlay behavior."""
         # Set window flags for overlay
         # Note: We don't use WindowTransparentForInput because we need mouse events for dragging
+        # Note: Removed Qt.Tool so window appears in taskbar
         self.setWindowFlags(
             Qt.WindowStaysOnTopHint |
-            Qt.FramelessWindowHint |
-            Qt.Tool
+            Qt.FramelessWindowHint
         )
         
         # Enable transparency
@@ -120,7 +121,7 @@ class OverlayWindow(QWidget):
         
         self.status_label.setText(f"Status: {text}")
         self.status_label.setStyleSheet(
-            f"font-size: 14px; font-weight: bold; color: {color};"
+            f"font-size: 14px; font-weight: bold; color: {color}; background-color: transparent;"
         )
     
     def _update_potion_log_display(self):
