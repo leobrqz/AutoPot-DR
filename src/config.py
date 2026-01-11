@@ -19,6 +19,8 @@ class Config:
     DEFAULT_ADDRESS_POTION_COUNT = "0x0"  # Placeholder, not used
     DEFAULT_MAX_HEALTH_BASE_OFFSET = "0x061CB608"
     DEFAULT_MAX_HEALTH_OFFSETS = "0x28,0x28,0x530,0x10,0x370"
+    DEFAULT_ACTUAL_HEALTH_BASE_OFFSET = "0x061CB608"
+    DEFAULT_ACTUAL_HEALTH_OFFSETS = "0x28,0x28,0x530,0x10,0x368"
     DEFAULT_HOTKEY_LOCK = "home"
     DEFAULT_HOTKEY_TOGGLE = "insert"
     DEFAULT_HOTKEY_CLOSE = "end"
@@ -46,6 +48,8 @@ class Config:
             'ADDRESS_POTION_COUNT': self.DEFAULT_ADDRESS_POTION_COUNT,
             'MAX_HEALTH_BASE_OFFSET': self.DEFAULT_MAX_HEALTH_BASE_OFFSET,
             'MAX_HEALTH_OFFSETS': self.DEFAULT_MAX_HEALTH_OFFSETS,
+            'ACTUAL_HEALTH_BASE_OFFSET': self.DEFAULT_ACTUAL_HEALTH_BASE_OFFSET,
+            'ACTUAL_HEALTH_OFFSETS': self.DEFAULT_ACTUAL_HEALTH_OFFSETS,
             'HOTKEY_LOCK': self.DEFAULT_HOTKEY_LOCK,
             'HOTKEY_TOGGLE': self.DEFAULT_HOTKEY_TOGGLE,
             'HOTKEY_CLOSE': self.DEFAULT_HOTKEY_CLOSE
@@ -110,6 +114,16 @@ class Config:
         """Get max health offsets as comma-separated hex string."""
         return self.config.get('SETTINGS', 'MAX_HEALTH_OFFSETS',
                               fallback=self.DEFAULT_MAX_HEALTH_OFFSETS)
+    
+    def get_actual_health_base_offset(self):
+        """Get actual health base offset (hex string)."""
+        return self.config.get('SETTINGS', 'ACTUAL_HEALTH_BASE_OFFSET',
+                              fallback=self.DEFAULT_ACTUAL_HEALTH_BASE_OFFSET)
+    
+    def get_actual_health_offsets(self):
+        """Get actual health offsets as comma-separated hex string."""
+        return self.config.get('SETTINGS', 'ACTUAL_HEALTH_OFFSETS',
+                              fallback=self.DEFAULT_ACTUAL_HEALTH_OFFSETS)
     
     def get_hotkey_lock(self):
         """Get hotkey for lock/unlock overlay."""

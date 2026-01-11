@@ -243,7 +243,6 @@ def main():
             for line in hotkey_manager.get_hotkey_info():
                 print(line)
             print("-----------")
-            print("Max_health pointer:")
             process_found_printed = True
     
     process_detector.process_status_changed.connect(on_process_status_changed)
@@ -264,6 +263,9 @@ def main():
     
     # Connect max health signal to overlay
     memory_reader.max_health_updated.connect(overlay.set_max_health)
+    
+    # Connect actual health signal to overlay
+    memory_reader.actual_health_updated.connect(overlay.set_actual_health)
     
     # Start process detection
     process_detector.start()

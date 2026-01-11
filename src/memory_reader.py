@@ -141,6 +141,8 @@ class MemoryReader(QObject):
     potion_used = pyqtSignal(float, float)  # health_amount, percentage
     # Signal emitted when max health is read
     max_health_updated = pyqtSignal(float)  # max_health value
+    # Signal emitted when actual health is read
+    actual_health_updated = pyqtSignal(float)  # actual_health value
     
     def __init__(self, config, process_name, potion_key="r"):
         """
@@ -164,7 +166,7 @@ class MemoryReader(QObject):
         self._process_running = False
         self._module_base = None
         self._max_health_initialized = False
-        self._attach_printed = False
+        self._actual_health_initialized = False
     
     def set_enabled(self, enabled: bool):
         """Set enabled state (pauses memory reading when False)."""
@@ -177,7 +179,7 @@ class MemoryReader(QObject):
             self._close_process()
             self._module_base = None
             self._max_health_initialized = False
-            self._attach_printed = False
+            self._actual_health_initialized = False
     
     def start(self):
         """Start memory reading in background thread."""
@@ -211,20 +213,12 @@ class MemoryReader(QObject):
                 # Get module base if not already cached
                 if self._module_base is None:
                     self._module_base = get_module_base_address(self._pm, self.process_name)
-                    if self._module_base is not None and not self._attach_printed:
-                        print(f"[OK] Module base address: {hex(self._module_base)}")
                 return True
             
             self._pm = pymem.Pymem(self.process_name)
             
             self._module_base = get_module_base_address(self._pm, self.process_name)
-            if self._module_base is not None:
-                if not self._attach_printed:
-                    print(f"[OK] Module base address: {hex(self._module_base)}")
-                    self._attach_printed = True
-            else:
-                if not self._attach_printed:
-                    print("[ERROR] Failed to get module base address")
+            if self._module_base is None:
                 return False
             
             return True
@@ -233,8 +227,6 @@ class MemoryReader(QObject):
             self._module_base = None
             return False
         except Exception as e:
-            if not self._attach_printed:
-                print(f"[ERROR] Error attaching to process: {e}")
             self._pm = None
             self._module_base = None
             return False
@@ -250,6 +242,9 @@ class MemoryReader(QObject):
         try:
             if self._pm is None or self._module_base is None:
                 return
+            
+            print("Max_health pointer:")
+            print(f"[OK] Module base address: {hex(self._module_base)}")
             
             # Get base offset and offsets from config
             base_offset_str = self.config.get_max_health_base_offset()
@@ -285,7 +280,7 @@ class MemoryReader(QObject):
                 if max_health > 0:
                     print(f"[RESULT] Player Max Health: {max_health}")
                     self._max_health_initialized = True
-                    print("--------")
+                    print("-------------")
             except Exception as e:
                 print(f"[ERROR] Failed to read final double value: {e}")
                 
@@ -336,16 +331,105 @@ class MemoryReader(QObject):
                 print(f"[ERROR] Error reading max health: {e}")
             return 0.0
     
+    def _initialize_actual_health_pointer(self):
+        """
+        Initialize and print actual health pointer debug information once.
+        This method prints all debug info when first successfully reading actual health.
+        """
+        if self._actual_health_initialized:
+            return
+        
+        try:
+            if self._pm is None or self._module_base is None:
+                return
+            
+            print("Actual_health pointer:")
+            print(f"[OK] Module base address: {hex(self._module_base)}")
+            
+            # Get base offset and offsets from config
+            base_offset_str = self.config.get_actual_health_base_offset()
+            offsets_str = self.config.get_actual_health_offsets()
+            
+            # Parse base offset
+            base_offset = parse_address(base_offset_str)
+            if base_offset == 0:
+                print("[ERROR] Invalid actual health base offset")
+                return
+            
+            # Parse offsets list
+            offsets = parse_offsets(offsets_str)
+            if not offsets:
+                print("[ERROR] Invalid actual health offsets")
+                return
+            
+            # Calculate base address (module_base + base_offset)
+            base_address = self._module_base + base_offset
+            print(f"[OK] Base pointer address: {hex(base_address)}")
+            
+            # Follow pointer chain
+            try:
+                final_address = read_pointer_chain(self._pm, base_address, offsets)
+                print(f"[OK] Final address: {hex(final_address)}")
+            except RuntimeError as e:
+                print(f"[ERROR] {e}")
+                return
+            
+            # Read double value (8 bytes)
+            try:
+                actual_health = read_memory_double(self._pm, final_address)
+                if actual_health >= 0:  # Allow 0.0 as valid value
+                    print(f"[RESULT] Player Actual Health: {actual_health}")
+                    self._actual_health_initialized = True
+                    print("--------------")
+            except Exception as e:
+                print(f"[ERROR] Failed to read final double value: {e}")
+                
+        except Exception as e:
+            print(f"[ERROR] Error initializing actual health pointer: {e}")
+    
     def _read_actual_health(self) -> float:
         """
-        Placeholder for reading actual/current health.
-        Currently returns 0.0 and does not affect the program.
+        Read actual/current health using pointer chain.
         
         Returns:
-            Current health value (float)
+            Actual health value (float) or 0.0 on error
         """
-        # Placeholder - not implemented yet
-        return 0.0
+        try:
+            if self._pm is None or self._module_base is None:
+                return 0.0
+            
+            # Initialize debug output once
+            if not self._actual_health_initialized:
+                self._initialize_actual_health_pointer()
+            
+            # Get base offset and offsets from config
+            base_offset_str = self.config.get_actual_health_base_offset()
+            offsets_str = self.config.get_actual_health_offsets()
+            
+            # Parse base offset
+            base_offset = parse_address(base_offset_str)
+            if base_offset == 0:
+                return 0.0
+            
+            # Parse offsets list
+            offsets = parse_offsets(offsets_str)
+            if not offsets:
+                return 0.0
+            
+            # Calculate base address (module_base + base_offset)
+            base_address = self._module_base + base_offset
+            
+            # Follow pointer chain
+            final_address = read_pointer_chain(self._pm, base_address, offsets)
+            
+            # Read double value (8 bytes)
+            actual_health = read_memory_double(self._pm, final_address)
+            
+            return actual_health
+        except Exception as e:
+            if not self._actual_health_initialized:
+                print(f"[ERROR] Error reading actual health: {e}")
+            return 0.0
     
     def _read_potion_count(self) -> int:
         """
@@ -383,9 +467,13 @@ class MemoryReader(QObject):
                     # Emit signal for overlay to update display
                     self.max_health_updated.emit(max_health)
                 
-                # Placeholder code for actual_health and potions (doesn't affect program)
-                # These are kept as placeholders for future implementation
-                actual_health = self._read_actual_health()  # Placeholder
+                # Read actual health using pointer chain
+                actual_health = self._read_actual_health()
+                if actual_health >= 0:  # Allow 0.0 as valid value
+                    # Emit signal for overlay to update display
+                    self.actual_health_updated.emit(actual_health)
+                
+                # Placeholder code for potions (doesn't affect program)
                 potion_count = self._read_potion_count()  # Placeholder
                 
                 # Placeholder potion logic (commented out, doesn't affect program)

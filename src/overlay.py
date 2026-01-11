@@ -45,6 +45,11 @@ class OverlayWindow(QWidget):
         self._update_status_display()
         layout.addWidget(self.status_label)
         
+        # Actual health label
+        self.actual_health_label = QLabel("Actual health: --")
+        self.actual_health_label.setStyleSheet("font-size: 12px; color: #CCCCCC; background-color: transparent;")
+        layout.addWidget(self.actual_health_label)
+        
         # Max health label
         self.max_health_label = QLabel("Max health: --")
         self.max_health_label.setStyleSheet("font-size: 12px; color: #CCCCCC; background-color: transparent;")
@@ -166,6 +171,18 @@ class OverlayWindow(QWidget):
     def toggle_locked(self):
         """Toggle locked state."""
         self.set_locked_state(not self._locked_state)
+    
+    def set_actual_health(self, actual_health: float):
+        """
+        Update actual health display.
+        
+        Args:
+            actual_health: Actual health value to display
+        """
+        if actual_health >= 0:
+            self.actual_health_label.setText(f"Actual health: {actual_health:.1f}")
+        else:
+            self.actual_health_label.setText("Actual health: --")
     
     def set_max_health(self, max_health: float):
         """
