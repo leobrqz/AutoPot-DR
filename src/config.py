@@ -14,9 +14,14 @@ class Config:
     
     # Default values
     DEFAULT_HEALTH_THRESHOLD = 30.0
-    DEFAULT_ADDRESS_CURRENT_HEALTH = "0x0"
-    DEFAULT_ADDRESS_MAX_HEALTH = "0x0"
-    DEFAULT_ADDRESS_POTION_COUNT = "0x0"
+    DEFAULT_ADDRESS_CURRENT_HEALTH = "0x0"  # Placeholder, not used
+    DEFAULT_ADDRESS_MAX_HEALTH = "0x0"  # Placeholder, not used
+    DEFAULT_ADDRESS_POTION_COUNT = "0x0"  # Placeholder, not used
+    DEFAULT_MAX_HEALTH_BASE_OFFSET = "0x061CB608"
+    DEFAULT_MAX_HEALTH_OFFSETS = "0x28,0x28,0x530,0x10,0x370"
+    DEFAULT_HOTKEY_LOCK = "home"
+    DEFAULT_HOTKEY_TOGGLE = "insert"
+    DEFAULT_HOTKEY_CLOSE = "end"
     DEFAULT_OVERLAY_POS_X = 200
     DEFAULT_OVERLAY_POS_Y = 880
     DEFAULT_OVERLAY_LOCKED = False
@@ -38,7 +43,12 @@ class Config:
             'HEALTH_THRESHOLD': str(self.DEFAULT_HEALTH_THRESHOLD),
             'ADDRESS_CURRENT_HEALTH': self.DEFAULT_ADDRESS_CURRENT_HEALTH,
             'ADDRESS_MAX_HEALTH': self.DEFAULT_ADDRESS_MAX_HEALTH,
-            'ADDRESS_POTION_COUNT': self.DEFAULT_ADDRESS_POTION_COUNT
+            'ADDRESS_POTION_COUNT': self.DEFAULT_ADDRESS_POTION_COUNT,
+            'MAX_HEALTH_BASE_OFFSET': self.DEFAULT_MAX_HEALTH_BASE_OFFSET,
+            'MAX_HEALTH_OFFSETS': self.DEFAULT_MAX_HEALTH_OFFSETS,
+            'HOTKEY_LOCK': self.DEFAULT_HOTKEY_LOCK,
+            'HOTKEY_TOGGLE': self.DEFAULT_HOTKEY_TOGGLE,
+            'HOTKEY_CLOSE': self.DEFAULT_HOTKEY_CLOSE
         }
         self.config['OVERLAY'] = {
             'POS_X': str(self.DEFAULT_OVERLAY_POS_X),
@@ -90,6 +100,31 @@ class Config:
         """Get potion count memory address."""
         return self.config.get('SETTINGS', 'ADDRESS_POTION_COUNT',
                               fallback=self.DEFAULT_ADDRESS_POTION_COUNT)
+    
+    def get_max_health_base_offset(self):
+        """Get max health base offset (hex string)."""
+        return self.config.get('SETTINGS', 'MAX_HEALTH_BASE_OFFSET',
+                              fallback=self.DEFAULT_MAX_HEALTH_BASE_OFFSET)
+    
+    def get_max_health_offsets(self):
+        """Get max health offsets as comma-separated hex string."""
+        return self.config.get('SETTINGS', 'MAX_HEALTH_OFFSETS',
+                              fallback=self.DEFAULT_MAX_HEALTH_OFFSETS)
+    
+    def get_hotkey_lock(self):
+        """Get hotkey for lock/unlock overlay."""
+        return self.config.get('SETTINGS', 'HOTKEY_LOCK',
+                              fallback=self.DEFAULT_HOTKEY_LOCK)
+    
+    def get_hotkey_toggle(self):
+        """Get hotkey for toggle enable/disable."""
+        return self.config.get('SETTINGS', 'HOTKEY_TOGGLE',
+                              fallback=self.DEFAULT_HOTKEY_TOGGLE)
+    
+    def get_hotkey_close(self):
+        """Get hotkey for close application."""
+        return self.config.get('SETTINGS', 'HOTKEY_CLOSE',
+                              fallback=self.DEFAULT_HOTKEY_CLOSE)
     
     def get_overlay_pos_x(self):
         """Get overlay X position."""

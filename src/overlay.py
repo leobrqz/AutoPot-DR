@@ -45,6 +45,11 @@ class OverlayWindow(QWidget):
         self._update_status_display()
         layout.addWidget(self.status_label)
         
+        # Max health label
+        self.max_health_label = QLabel("Max health: --")
+        self.max_health_label.setStyleSheet("font-size: 12px; color: #CCCCCC; background-color: transparent;")
+        layout.addWidget(self.max_health_label)
+        
         # Threshold label
         threshold = self.config.get_health_threshold()
         self.threshold_label = QLabel(f"Threshold: {threshold}%")
@@ -161,6 +166,18 @@ class OverlayWindow(QWidget):
     def toggle_locked(self):
         """Toggle locked state."""
         self.set_locked_state(not self._locked_state)
+    
+    def set_max_health(self, max_health: float):
+        """
+        Update max health display.
+        
+        Args:
+            max_health: Max health value to display
+        """
+        if max_health > 0:
+            self.max_health_label.setText(f"Max health: {max_health:.1f}")
+        else:
+            self.max_health_label.setText("Max health: --")
     
     def add_potion_log_entry(self, health_amount: float, percentage: float):
         """

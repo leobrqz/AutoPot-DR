@@ -15,6 +15,7 @@ import keyboard
 
 from config import Config
 from overlay import OverlayWindow
+from memory_reader import MemoryReader
 
 
 # Game process name
@@ -24,7 +25,7 @@ GAME_PROCESS_NAME = "ProjectAlpha-Win64-Shipping.exe"
 class ProcessDetector(QObject):
     """Detects if game process is running and emits signals."""
     
-    process_status_changed = pyqtSignal(bool)  # True if running, False if not
+    process_status_changed = pyqtSignal(bool, int)  # True if running, False if not, PID
     
     def __init__(self, process_name):
         """
@@ -38,6 +39,7 @@ class ProcessDetector(QObject):
         self._running = False
         self._thread = None
         self._last_status = None
+        self._last_pid = None
     
     def start(self):
         """Start process detection in background thread."""
@@ -58,12 +60,13 @@ class ProcessDetector(QObject):
         """Main detection loop running in background thread."""
         while self._running:
             try:
-                is_running = self.check_process_running()
+                is_running, pid = self.check_process_running()
                 
                 # Only emit signal if status changed
-                if is_running != self._last_status:
+                if is_running != self._last_status or (is_running and pid != self._last_pid):
                     self._last_status = is_running
-                    self.process_status_changed.emit(is_running)
+                    self._last_pid = pid
+                    self.process_status_changed.emit(is_running, pid)
                 
                 # Check every 0.5 seconds
                 time.sleep(0.5)
@@ -71,48 +74,65 @@ class ProcessDetector(QObject):
                 print(f"Error in process detection: {e}")
                 time.sleep(1.0)
     
-    def check_process_running(self) -> bool:
-        """Check if game process is running."""
+    def check_process_running(self):
+        """
+        Check if game process is running.
+        
+        Returns:
+            Tuple of (is_running: bool, pid: int)
+        """
         try:
-            for proc in psutil.process_iter(['name']):
+            for proc in psutil.process_iter(['name', 'pid']):
                 if proc.info['name'] == self.process_name:
-                    return True
-            return False
+                    return (True, proc.info['pid'])
+            return (False, 0)
         except Exception:
-            return False
+            return (False, 0)
 
 
 class HotkeyManager:
     """Manages global hotkeys for the application."""
     
-    def __init__(self, overlay, app):
+    def __init__(self, overlay, app, config):
         """
         Initialize hotkey manager.
         
         Args:
             overlay: OverlayWindow instance
             app: QApplication instance
+            config: Config instance for hotkey settings
         """
         self.overlay = overlay
         self.app = app
+        self.config = config
         self._registered = False
     
     def register_hotkeys(self):
-        """Register all global hotkeys."""
+        """Register all global hotkeys from config."""
         try:
-            # HOME: Toggle lock/unlock
-            keyboard.add_hotkey('home', self._toggle_lock)
+            lock_key = self.config.get_hotkey_lock()
+            toggle_key = self.config.get_hotkey_toggle()
+            close_key = self.config.get_hotkey_close()
             
-            # INSERT: Toggle enabled/disabled
-            keyboard.add_hotkey('insert', self._toggle_enabled)
-            
-            # END: Close application
-            keyboard.add_hotkey('end', self._close_app)
+            keyboard.add_hotkey(lock_key, self._toggle_lock)
+            keyboard.add_hotkey(toggle_key, self._toggle_enabled)
+            keyboard.add_hotkey(close_key, self._close_app)
             
             self._registered = True
-            print("Hotkeys registered: HOME (lock), INSERT (enable/disable), END (close)")
         except Exception as e:
             print(f"Error registering hotkeys: {e}")
+    
+    def get_hotkey_info(self):
+        """Get formatted hotkey information for display."""
+        lock_key = self.config.get_hotkey_lock().upper()
+        toggle_key = self.config.get_hotkey_toggle().upper()
+        close_key = self.config.get_hotkey_close().upper()
+        
+        return [
+            f"  {lock_key} - Toggle overlay lock/unlock",
+            f"  {toggle_key} - Toggle auto potion on/off",
+            f"  {close_key} - Close application"
+        ]
     
     def _toggle_lock(self):
         """Toggle overlay lock state."""
@@ -195,30 +215,73 @@ def main():
     
     overlay.show()
     
+    # Print searching message
+    print(f'Searching process "{GAME_PROCESS_NAME}"...')
+    
     # Initialize process detector
-    print("Starting process detection...")
     process_detector = ProcessDetector(GAME_PROCESS_NAME)
     
-    # Connect process status to overlay
-    process_detector.process_status_changed.connect(overlay.set_process_running)
+    # Initialize memory reader
+    memory_reader = MemoryReader(config, GAME_PROCESS_NAME, potion_key="r")
+    
+    # Track if we've printed process found message
+    process_found_printed = False
+    
+    # Connect process status to overlay and memory reader with PID handling
+    def on_process_status_changed(running, pid):
+        nonlocal process_found_printed
+        overlay.set_process_running(running)
+        memory_reader.set_process_running(running)
+        
+        # Print process found message once
+        if running and not process_found_printed:
+            print(f'Process found: "{GAME_PROCESS_NAME}" (PID: {pid})')
+            print("Started memory_reader...")
+            # Print hotkeys section after process found
+            print("-----------")
+            print("Hotkeys:")
+            for line in hotkey_manager.get_hotkey_info():
+                print(line)
+            print("-----------")
+            print("Max_health pointer:")
+            process_found_printed = True
+    
+    process_detector.process_status_changed.connect(on_process_status_changed)
+    
+    # Connect enabled state changes: when overlay enabled state changes, update memory reader
+    # Wrap the overlay's set_enabled_state to also update memory reader
+    original_set_enabled = overlay.set_enabled_state
+    def set_enabled_wrapper(enabled):
+        original_set_enabled(enabled)
+        memory_reader.set_enabled(enabled)
+    overlay.set_enabled_state = set_enabled_wrapper
+    
+    # Set initial enabled state for memory reader
+    memory_reader.set_enabled(overlay.is_enabled())
+    
+    # Connect potion usage signal to overlay
+    memory_reader.potion_used.connect(overlay.add_potion_log_entry)
+    
+    # Connect max health signal to overlay
+    memory_reader.max_health_updated.connect(overlay.set_max_health)
     
     # Start process detection
     process_detector.start()
     
     # Register hotkeys
-    print("Registering hotkeys...")
-    hotkey_manager = HotkeyManager(overlay, app)
+    hotkey_manager = HotkeyManager(overlay, app, config)
     hotkey_manager.register_hotkeys()
     
-    # Initial process check
-    initial_status = process_detector.check_process_running()
-    overlay.set_process_running(initial_status)
+    # Start memory reader
+    memory_reader.start()
     
-    print("Application started. Overlay is visible.")
-    print("Hotkeys:")
-    print("  HOME - Toggle overlay lock/unlock")
-    print("  INSERT - Toggle auto potion on/off")
-    print("  END - Close application")
+    # Initial process check
+    initial_status, initial_pid = process_detector.check_process_running()
+    if initial_status:
+        on_process_status_changed(initial_status, initial_pid)
+    else:
+        overlay.set_process_running(False)
+        memory_reader.set_process_running(False)
     
     # Run application
     try:
@@ -228,6 +291,7 @@ def main():
     finally:
         # Cleanup
         process_detector.stop()
+        memory_reader.stop()
         print("Application closed")
 
 
