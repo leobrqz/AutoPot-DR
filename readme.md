@@ -18,6 +18,11 @@ A Windows overlay tool that automatically uses potions when your HP drops below 
 
 ## ✨ Features
 
+<p align="center">
+  <img src="imgs/OverlayOFF.png" alt="Overlay OFF" width="45%"/>
+  <img src="imgs/OverlayON.png" alt="Overlay ON" width="43.5%"/>
+</p>
+
 * **Auto Potion**: Automatically triggers a potion when HP falls below a set percentage.
 * **Potion log**: The overlay displays a log of recent potion uses, showing HP values and timestamps for each use.
 * **Overlay UI**: Movable, lockable PyQt5 overlay showing status, HP, and logs.
