@@ -69,9 +69,9 @@ class OverlayWindow(QWidget):
         log_header.setStyleSheet("font-size: 11px; font-weight: bold; color: #CCCCCC; background-color: transparent;")
         layout.addWidget(log_header)
         
-        # Potion log entries (5 labels)
+        # Potion log entries (3 labels)
         self.log_labels = []
-        for i in range(5):
+        for i in range(3):
             log_label = QLabel("")
             log_label.setStyleSheet("font-size: 10px; color: #AAAAAA; background-color: transparent;")
             log_label.setFixedHeight(15)
@@ -137,8 +137,8 @@ class OverlayWindow(QWidget):
         for label in self.log_labels:
             label.setText("")
         
-        # Display entries (most recent first)
-        for i, entry in enumerate(self._potion_log[:5]):
+        # Display entries (most recent first, max 3)
+        for i, entry in enumerate(self._potion_log[:3]):
             timestamp = entry['timestamp'].strftime("%H:%M:%S")
             health_amount = entry['health_amount']
             percentage = entry['percentage']
@@ -221,9 +221,9 @@ class OverlayWindow(QWidget):
         }
         # Add to beginning (most recent first)
         self._potion_log.insert(0, entry)
-        # Keep only last 5 entries
-        if len(self._potion_log) > 5:
-            self._potion_log = self._potion_log[:5]
+        # Keep only last 3 entries
+        if len(self._potion_log) > 3:
+            self._potion_log = self._potion_log[:3]
         self._update_potion_log_display()
     
     # Mouse event handlers for dragging

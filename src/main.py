@@ -17,7 +17,6 @@ from config import Config
 from overlay import OverlayWindow
 from memory_reader import MemoryReader
 
-
 # Game process name
 GAME_PROCESS_NAME = "ProjectAlpha-Win64-Shipping.exe"
 
