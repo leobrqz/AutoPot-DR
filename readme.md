@@ -63,6 +63,32 @@ python src/main.py
 
 ## ⚙️ Configuration
 
+The application creates a `config_user.ini` file on first run with default settings. You can modify this file to customize the tool's behavior.
+
+### General 
+
+- **`health_threshold`** (default: `30.0`)
+  - The health percentage threshold at which the tool will automatically use a potion.
+
+
+### Overlay 
+
+- **`pos_x`** (default: `200`)
+- **`pos_y`** (default: `880`)
+- **`locked`** (default: `False`)
+  - Whether the overlay is locked (cannot be moved) on startup.
+
+### Keybinds 
+
+Customize the global hotkeys used to control the tool:
+
+- **`hotkey_lock`** (default: `home`)
+  - Toggle overlay lock/unlock (prevents moving the overlay).
+- **`hotkey_toggle`** (default: `insert`)
+  - Toggle auto potion feature on/off.
+- **`hotkey_close`** (default: `end`)
+  - Close the application.
+
 
 ## Credits
 
