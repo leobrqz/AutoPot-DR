@@ -5,13 +5,13 @@ import sys
 
 PROCESS_NAME = "ProjectAlpha-Win64-Shipping.exe"
 
-# Cheat Engine pointer info (Actual Health)
-BASE_OFFSET = 0x061CB608
+# Cheat Engine pointer info (Current Health)
+BASE_OFFSET = 0x064D8FD0
 OFFSETS = [
-    0x28,
-    0x28,
-    0x530,
-    0x10,
+    0x30,
+    0x8C8,
+    0xB0,
+    0x2F0,
     0x368
 ]
 
@@ -68,12 +68,12 @@ def main():
 
     try:
         raw = pm.read_bytes(final_address, 8)
-        actual_health = struct.unpack("<d", raw)[0]
+        current_health = struct.unpack("<d", raw)[0]
     except pymem.exception.MemoryReadError:
-        print("[ERROR] Failed to read actual health value.")
+        print("[ERROR] Failed to read current health value.")
         sys.exit(1)
 
-    print(f"[RESULT] Player Actual Health: {actual_health}")
+    print(f"[RESULT] Player Current Health: {current_health}")
 
 
 if __name__ == "__main__":

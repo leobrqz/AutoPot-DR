@@ -28,6 +28,8 @@ class OverlayWindow(QWidget):
         self._locked_state = config.get_overlay_locked()
         self._process_running = False
         self._potion_log: List[Dict] = []  # List of {timestamp, health_amount, percentage}
+        self._current_health = 0.0
+        self._max_health = 0.0
         
         self._init_ui()
         self._setup_window_properties()
@@ -45,21 +47,16 @@ class OverlayWindow(QWidget):
         self._update_status_display()
         layout.addWidget(self.status_label)
         
-        # Actual health label
-        self.actual_health_label = QLabel("Actual health: --")
-        self.actual_health_label.setStyleSheet("font-size: 12px; color: #CCCCCC; background-color: transparent;")
-        layout.addWidget(self.actual_health_label)
-        
-        # Max health label
-        self.max_health_label = QLabel("Max health: --")
-        self.max_health_label.setStyleSheet("font-size: 12px; color: #CCCCCC; background-color: transparent;")
-        layout.addWidget(self.max_health_label)
+        # Combined health label
+        self.health_label = QLabel("Health: -- | --")
+        self.health_label.setStyleSheet("font-size: 12px; color: #CCCCCC; background-color: transparent;")
+        layout.addWidget(self.health_label)
         
         # Threshold label
-        threshold = self.config.get_health_threshold()
-        self.threshold_label = QLabel(f"Threshold: {threshold}%")
+        self.threshold_label = QLabel("Threshold: -- | --%")
         self.threshold_label.setStyleSheet("font-size: 12px; color: #CCCCCC; background-color: transparent;")
         layout.addWidget(self.threshold_label)
+        self._update_threshold_display()
         
         # Spacer
         spacer = QLabel("")
@@ -172,17 +169,32 @@ class OverlayWindow(QWidget):
         """Toggle locked state."""
         self.set_locked_state(not self._locked_state)
     
-    def set_actual_health(self, actual_health: float):
+    def _update_health_display(self):
+        """Update the combined health display."""
+        if self._max_health > 0 and self._current_health >= 0:
+            self.health_label.setText(f"Health: {self._current_health:.1f} | {self._max_health:.1f}")
+        else:
+            self.health_label.setText("Health: -- | --")
+        self._update_threshold_display()
+    
+    def _update_threshold_display(self):
+        """Update the threshold display with calculated value and percentage."""
+        threshold_percentage = self.config.get_health_threshold()
+        if self._max_health > 0:
+            threshold_value = (self._max_health * threshold_percentage) / 100.0
+            self.threshold_label.setText(f"Threshold: {threshold_value:.1f} | {threshold_percentage}%")
+        else:
+            self.threshold_label.setText(f"Threshold: -- | {threshold_percentage}%")
+    
+    def set_current_health(self, current_health: float):
         """
-        Update actual health display.
+        Update current health display.
         
         Args:
-            actual_health: Actual health value to display
+            current_health: Current health value to display
         """
-        if actual_health >= 0:
-            self.actual_health_label.setText(f"Actual health: {actual_health:.1f}")
-        else:
-            self.actual_health_label.setText("Actual health: --")
+        self._current_health = current_health if current_health >= 0 else 0.0
+        self._update_health_display()
     
     def set_max_health(self, max_health: float):
         """
@@ -191,10 +203,8 @@ class OverlayWindow(QWidget):
         Args:
             max_health: Max health value to display
         """
-        if max_health > 0:
-            self.max_health_label.setText(f"Max health: {max_health:.1f}")
-        else:
-            self.max_health_label.setText("Max health: --")
+        self._max_health = max_health if max_health > 0 else 0.0
+        self._update_health_display()
     
     def add_potion_log_entry(self, health_amount: float, percentage: float):
         """

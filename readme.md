@@ -1,10 +1,11 @@
-# Auto Potion Tool 🧙‍♂
+# Auto Potion Tool 🧌
 
-
+[![Dwarven Realms](https://img.shields.io/badge/Dwarven%20Realms%20Version-5.3.2.0-purple)]()
+[![Windows](https://img.shields.io/badge/Platform-Windows-blue)]()
 
 A Windows overlay tool that automatically uses potions when your HP drops below a configurable threshold. Features a PyQt5 overlay, hotkey controls, and direct memory reading for reliable automation.
 
-**⚠️Warning**: This tool is intended for offline use. While it may work online, use it at your own risk and discretion.
+**⚠️Warning**: This tool is intended for **offline use only**. While it may work online, use it at your own risk and discretion.
 
 
 

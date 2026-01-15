@@ -7,12 +7,12 @@ import time
 PROCESS_NAME = "ProjectAlpha-Win64-Shipping.exe"
 
 # Cheat Engine pointer info
-BASE_OFFSET = 0x061CB608
+BASE_OFFSET = 0x064D8FD0
 OFFSETS = [
-    0x28,
-    0x28,
-    0x530,
-    0x10,
+    0x30,
+    0x940,
+    0x5D0,
+    0x2F0,
     0x370
 ]
 

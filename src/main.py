@@ -264,8 +264,8 @@ def main():
     # Connect max health signal to overlay
     memory_reader.max_health_updated.connect(overlay.set_max_health)
     
-    # Connect actual health signal to overlay
-    memory_reader.actual_health_updated.connect(overlay.set_actual_health)
+    # Connect current health signal to overlay
+    memory_reader.current_health_updated.connect(overlay.set_current_health)
     
     # Start process detection
     process_detector.start()
