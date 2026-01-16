@@ -23,6 +23,7 @@ class OverlayWindow(QWidget):
             parent: Parent widget (None for top-level)
         """
         super().__init__(parent)
+        print("Creating overlay window...")
         self.config = config
         self._enabled_state = True
         self._locked_state = config.get_overlay_locked()

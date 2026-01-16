@@ -2,7 +2,6 @@ import pymem
 import pymem.process
 import struct
 import sys
-import time
 
 PROCESS_NAME = "ProjectAlpha-Win64-Shipping.exe"
 

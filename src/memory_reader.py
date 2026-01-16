@@ -8,6 +8,7 @@ import struct
 import sys
 import ctypes
 from ctypes import wintypes
+from datetime import datetime
 import pymem
 import pymem.process
 import keyboard
@@ -80,7 +81,7 @@ else:
 # Base Memory Reading Functions
 # ============================================================================
 
-def read_pointer_chain(pm, base_address, offsets):
+def read_pointer_chain(pm, base_address, offsets, return_chain=False):
     """
     Resolves a multi-level pointer chain and returns the final address.
     
@@ -88,21 +89,30 @@ def read_pointer_chain(pm, base_address, offsets):
         pm: Pymem instance
         base_address: Starting address (int)
         offsets: List of offsets (list of int)
+        return_chain: If True, returns tuple (final_address, chain_addresses)
     
     Returns:
-        Final address after following pointer chain
+        Final address after following pointer chain, or tuple (final_address, chain_addresses) if return_chain=True
     """
     addr = base_address
+    chain_addresses = [base_address]  # Start with base address
     
     for i, offset in enumerate(offsets):
         try:
             # Read pointer (8 bytes because it's a 64-bit process)
             addr = pm.read_ulonglong(addr)
-        except pymem.exception.MemoryReadError:
-            raise RuntimeError(f"Failed to read pointer at level {i} (address: {hex(addr)})")
+            if addr == 0:
+                raise RuntimeError(f"Read null pointer at level {i} (address: {hex(chain_addresses[-1])})")
+            if addr < 4096 and i < len(offsets) - 1:
+                raise RuntimeError(f"Address too low ({hex(addr)}) at level {i}")
+        except pymem.exception.MemoryReadError as e:
+            raise RuntimeError(f"Failed to read pointer at level {i} (address: {hex(chain_addresses[-1])}): {e}")
         
         addr += offset
+        chain_addresses.append(addr)
     
+    if return_chain:
+        return addr, chain_addresses
     return addr
 
 
@@ -209,6 +219,10 @@ class MemoryReader(QObject):
     max_health_updated = pyqtSignal(float)  # max_health value
     # Signal emitted when current health is read
     current_health_updated = pyqtSignal(float)  # current_health value
+    # Signal emitted when process is successfully attached
+    process_attached = pyqtSignal()
+    # Signal emitted when process death is detected
+    process_died = pyqtSignal()
     
     def __init__(self, config, process_name, potion_key="r"):
         """
@@ -236,6 +250,16 @@ class MemoryReader(QObject):
         self._last_max_health = 0.0
         self._last_current_health = 0.0
         self._process_id = None
+        self._last_max_health_chain = None
+        self._last_current_health_chain = None
+        self._attachment_notified = False  # Track if we've notified about current attachment
+        self._last_chain_resolution_attempt = 0.0
+        self._chain_resolution_cooldown = 1.0  # 1 second cooldown for chain resolution
+        self._last_error_print_time = 0.0
+        self._error_print_cooldown = 1.0  # 1 second cooldown for error prints
+    
+    # Constants
+    MEMORY_READ_INTERVAL = 0.01  # 10ms interval for memory reading loop
     
     def set_enabled(self, enabled: bool):
         """Set enabled state (pauses memory reading when False)."""
@@ -250,6 +274,9 @@ class MemoryReader(QObject):
             self._max_health_initialized = False
             self._current_health_initialized = False
             self._process_id = None
+            self._last_max_health_chain = None
+            self._last_current_health_chain = None
+            self._attachment_notified = False  # Reset so we can notify again on next attachment
     
     def start(self):
         """Start memory reading in background thread."""
@@ -276,35 +303,58 @@ class MemoryReader(QObject):
                 pass
             self._pm = None
     
+    def _handle_process_death(self):
+        """Handle process death - cleanup state and emit signal."""
+        self._close_process()
+        self._module_base = None
+        self._max_health_initialized = False
+        self._current_health_initialized = False
+        self._process_id = None
+        self._last_max_health_chain = None
+        self._last_current_health_chain = None
+        self._attachment_notified = False
+        if self._process_running:
+            self.process_died.emit()
+            self._process_running = False
+    
     def _attach_to_process(self) -> bool:
         """Attach to game process using pymem."""
         try:
             if self._pm is not None:
-                # Get module base if not already cached
-                if self._module_base is None:
-                    self._module_base = get_module_base_address(self._pm, self.process_name)
-                # Update process ID if not set
-                if self._process_id is None:
-                    self._process_id = self._pm.process_id
-                return True
+                # Already attached, verify process is still alive by checking process handle
+                try:
+                    # Try to read a small amount of memory to verify process is still alive
+                    # This will raise ProcessNotFound if process died
+                    _ = self._pm.read_bytes(self._pm.process_base, 1)
+                    # Process is still alive, just ensure process ID is cached
+                    if self._process_id is None:
+                        self._process_id = self._pm.process_id
+                    return True
+                except (pymem.exception.ProcessNotFound, pymem.exception.MemoryReadError):
+                    # Process died - cleanup and signal
+                    self._handle_process_death()
+                    return False
             
+            # Not attached yet, try to attach
             self._pm = pymem.Pymem(self.process_name)
             self._process_id = self._pm.process_id
             
             self._module_base = get_module_base_address(self._pm, self.process_name)
             if self._module_base is None:
+                self._close_process()
                 return False
             
+            # Successfully attached - emit signal only once per attachment session
+            if not self._attachment_notified:
+                self.process_attached.emit()
+                self._attachment_notified = True
             return True
         except pymem.exception.ProcessNotFound:
-            self._pm = None
-            self._module_base = None
-            self._process_id = None
+            # Process not found by name - this is the only true "process death" indicator
+            self._handle_process_death()
             return False
         except Exception as e:
-            self._pm = None
-            self._module_base = None
-            self._process_id = None
+            self._close_process()
             return False
     
     def _initialize_max_health_pointer(self):
@@ -315,12 +365,18 @@ class MemoryReader(QObject):
         if self._max_health_initialized:
             return
         
+        # Throttle chain resolution attempts to once per second
+        current_time = time.time()
+        if current_time - self._last_chain_resolution_attempt < self._chain_resolution_cooldown:
+            return  # Skip this attempt, wait for cooldown
+        self._last_chain_resolution_attempt = current_time
+        
         try:
             if self._pm is None or self._module_base is None:
                 return
             
             print("Max_health pointer:")
-            print(f"[OK] Module base address: {hex(self._module_base)}")
+            print(f"[OK] Module: {self.process_name} | Base address: {hex(self._module_base)}")
             
             # Get base offset and offsets from config
             base_offset_str = self.config.get_max_health_base_offset()
@@ -340,11 +396,20 @@ class MemoryReader(QObject):
             
             # Calculate base address (module_base + base_offset)
             base_address = self._module_base + base_offset
-            print(f"[OK] Base pointer address: {hex(base_address)}")
             
             # Follow pointer chain
             try:
-                final_address = read_pointer_chain(self._pm, base_address, offsets)
+                final_address, chain_addresses = read_pointer_chain(self._pm, base_address, offsets, return_chain=True)
+                
+                # Check if pointer chain path changed (excluding final address)
+                current_pointer_path = tuple(chain_addresses[:-1])
+                if self._last_max_health_chain != current_pointer_path:
+                    print("[DEBUG] Max health pointer chain resolved:")
+                    print(f"  Step 0: addr=0x{chain_addresses[0]:X}")
+                    for i, (addr, offset) in enumerate(zip(chain_addresses[1:], offsets), 1):
+                        print(f"  Step {i}: addr=0x{addr:X} offset=0x{offset:X}")
+                    self._last_max_health_chain = current_pointer_path
+                
                 print(f"[OK] Final address: {hex(final_address)}")
             except RuntimeError as e:
                 print(f"[ERROR] {e}")
@@ -402,9 +467,17 @@ class MemoryReader(QObject):
             max_health = read_memory_double(self._pm, final_address)
             
             return max_health
+        except RuntimeError:
+            # Null pointer or invalid address - expected when pointer chain changes (e.g., moving areas)
+            # Silently ignore and return 0.0 - don't treat as process death
+            return 0.0
         except Exception as e:
+            # Other errors - only print during initialization to avoid spam
             if not self._max_health_initialized:
-                print(f"[ERROR] Error reading max health: {e}")
+                current_time = time.time()
+                if current_time - self._last_error_print_time >= self._error_print_cooldown:
+                    print(f"[ERROR] Error reading max health: {e}")
+                    self._last_error_print_time = current_time
             return 0.0
     
     def _initialize_current_health_pointer(self):
@@ -415,12 +488,18 @@ class MemoryReader(QObject):
         if self._current_health_initialized:
             return
         
+        # Throttle chain resolution attempts to once per second
+        current_time = time.time()
+        if current_time - self._last_chain_resolution_attempt < self._chain_resolution_cooldown:
+            return  # Skip this attempt, wait for cooldown
+        self._last_chain_resolution_attempt = current_time
+        
         try:
             if self._pm is None or self._module_base is None:
                 return
             
             print("Current_health pointer:")
-            print(f"[OK] Module base address: {hex(self._module_base)}")
+            print(f"[OK] Module: {self.process_name} | Base address: {hex(self._module_base)}")
             
             # Get base offset and offsets from config
             base_offset_str = self.config.get_current_health_base_offset()
@@ -440,11 +519,20 @@ class MemoryReader(QObject):
             
             # Calculate base address (module_base + base_offset)
             base_address = self._module_base + base_offset
-            print(f"[OK] Base pointer address: {hex(base_address)}")
             
             # Follow pointer chain
             try:
-                final_address = read_pointer_chain(self._pm, base_address, offsets)
+                final_address, chain_addresses = read_pointer_chain(self._pm, base_address, offsets, return_chain=True)
+                
+                # Check if pointer chain path changed (excluding final address)
+                current_pointer_path = tuple(chain_addresses[:-1])
+                if self._last_current_health_chain != current_pointer_path:
+                    print("[DEBUG] Current health pointer chain resolved:")
+                    print(f"  Step 0: addr=0x{chain_addresses[0]:X}")
+                    for i, (addr, offset) in enumerate(zip(chain_addresses[1:], offsets), 1):
+                        print(f"  Step {i}: addr=0x{addr:X} offset=0x{offset:X}")
+                    self._last_current_health_chain = current_pointer_path
+                
                 print(f"[OK] Final address: {hex(final_address)}")
             except RuntimeError as e:
                 print(f"[ERROR] {e}")
@@ -502,9 +590,17 @@ class MemoryReader(QObject):
             current_health = read_memory_double(self._pm, final_address)
             
             return current_health
+        except RuntimeError:
+            # Null pointer or invalid address - expected when pointer chain changes (e.g., moving areas)
+            # Silently ignore and return 0.0 - don't treat as process death
+            return 0.0
         except Exception as e:
+            # Other errors - only print during initialization to avoid spam
             if not self._current_health_initialized:
-                print(f"[ERROR] Error reading current health: {e}")
+                current_time = time.time()
+                if current_time - self._last_error_print_time >= self._error_print_cooldown:
+                    print(f"[ERROR] Error reading current health: {e}")
+                    self._last_error_print_time = current_time
             return 0.0
     
     def _read_potion_count(self) -> int:
@@ -543,7 +639,7 @@ class MemoryReader(QObject):
             try:
                 # Only read if process is running and enabled
                 if not self._process_running or not self._enabled:
-                    time.sleep(0.01)
+                    time.sleep(self.MEMORY_READ_INTERVAL)
                     continue
                 
                 # Attach to process if not already attached
@@ -582,12 +678,22 @@ class MemoryReader(QObject):
                             # Calculate percentage for log
                             health_percentage = (current_health / max_health) * 100.0
                             self.potion_used.emit(current_health, health_percentage)
+                            
+                            # Print to console with same format as overlay
+                            timestamp = datetime.now().strftime("%H:%M:%S")
+                            health_amount = int(current_health)
+                            print(f"[LOG] {timestamp} - {health_amount} - {health_percentage:.1f}%")
                 
                 # Check every 10ms
-                time.sleep(0.01)
+                time.sleep(self.MEMORY_READ_INTERVAL)
                 
+            except (pymem.exception.ProcessNotFound, pymem.exception.MemoryReadError) as e:
+                # Process-related errors - handled in _attach_to_process, just wait and retry
+                time.sleep(0.5)
             except Exception as e:
-                print(f"Error in memory reading loop: {e}")
-                self._close_process()
-                self._module_base = None
+                # Other unexpected errors - log but don't treat as process death
+                current_time = time.time()
+                if current_time - self._last_error_print_time >= self._error_print_cooldown:
+                    print(f"Unexpected error in memory reading loop: {e}")
+                    self._last_error_print_time = current_time
                 time.sleep(0.5)

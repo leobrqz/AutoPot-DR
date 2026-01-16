@@ -1,7 +1,3 @@
-"""
-Main application entry point.
-Initializes overlay, process detection, and hotkey handling.
-"""
 import sys
 import os
 import threading
@@ -9,7 +5,7 @@ import time
 import psutil
 import ctypes
 from PyQt5.QtWidgets import QApplication
-from PyQt5.QtCore import QTimer, pyqtSignal, QObject
+from PyQt5.QtCore import pyqtSignal, QObject
 from PyQt5.QtGui import QIcon
 import keyboard
 
@@ -26,6 +22,10 @@ class ProcessDetector(QObject):
     
     process_status_changed = pyqtSignal(bool, int)  # True if running, False if not, PID
     
+    # States
+    STATE_SEARCHING = "SEARCHING"
+    STATE_ATTACHED = "ATTACHED"
+    
     def __init__(self, process_name):
         """
         Initialize process detector.
@@ -39,6 +39,12 @@ class ProcessDetector(QObject):
         self._thread = None
         self._last_status = None
         self._last_pid = None
+        self._state = self.STATE_SEARCHING
+        self._lock = threading.Lock()  # Thread-safe state changes
+        self._searching_printed = False
+    
+    # Constants
+    PROCESS_CHECK_INTERVAL = 1.5  # 1.5 seconds interval for process checking when searching
     
     def start(self):
         """Start process detection in background thread."""
@@ -59,7 +65,24 @@ class ProcessDetector(QObject):
         """Main detection loop running in background thread."""
         while self._running:
             try:
+                # Only check when in SEARCHING state
+                with self._lock:
+                    current_state = self._state
+                
+                if current_state == self.STATE_ATTACHED:
+                    # Process is attached, no need to check - wait and continue
+                    time.sleep(1.0)
+                    continue
+                
+                # We're in SEARCHING state, check for process
                 is_running, pid = self.check_process_running()
+                
+                # Print searching message only when process is not found
+                if not is_running and not self._searching_printed:
+                    print(f'Searching process "{self.process_name}"...')
+                    self._searching_printed = True
+                elif is_running:
+                    self._searching_printed = False  # Reset so it can print again if process stops
                 
                 # Only emit signal if status changed
                 if is_running != self._last_status or (is_running and pid != self._last_pid):
@@ -67,11 +90,25 @@ class ProcessDetector(QObject):
                     self._last_pid = pid
                     self.process_status_changed.emit(is_running, pid)
                 
-                # Check every 0.5 seconds
-                time.sleep(0.5)
+                # Check every 1.5 seconds when searching (less frequent than before)
+                time.sleep(self.PROCESS_CHECK_INTERVAL)
             except Exception as e:
                 print(f"Error in process detection: {e}")
                 time.sleep(1.0)
+    
+    def set_attached(self):
+        """Set state to ATTACHED - stops checking for process."""
+        with self._lock:
+            self._state = self.STATE_ATTACHED
+    
+    def set_searching(self):
+        """Set state to SEARCHING - resumes checking for process."""
+        with self._lock:
+            self._state = self.STATE_SEARCHING
+            # Reset last status so we can detect the process again
+            self._last_status = None
+            self._last_pid = None
+            self._searching_printed = False  # Reset flag
     
     def check_process_running(self):
         """
@@ -118,6 +155,13 @@ class HotkeyManager:
             keyboard.add_hotkey(close_key, self._close_app)
             
             self._registered = True
+            
+            # Print hotkeys after successful registration
+            print("-----------")
+            print("Hotkeys:")
+            for line in self.get_hotkey_info():
+                print(line)
+            print("-----------")
         except Exception as e:
             print(f"Error registering hotkeys: {e}")
     
@@ -186,12 +230,10 @@ def main():
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
     
-    # Load configuration
-    print("Loading configuration...")
+    # Load configuration (will print "Loading configuration..." inside Config.__init__)
     config = Config()
     
-    # Create overlay window
-    print("Creating overlay window...")
+    # Create overlay window (will print "Creating overlay window..." inside OverlayWindow.__init__)
     overlay = OverlayWindow(config)
     overlay.setWindowTitle("AutoPot-DR")
     
@@ -214,9 +256,6 @@ def main():
     
     overlay.show()
     
-    # Print searching message
-    print(f'Searching process "{GAME_PROCESS_NAME}"...')
-    
     # Initialize process detector
     process_detector = ProcessDetector(GAME_PROCESS_NAME)
     
@@ -235,16 +274,28 @@ def main():
         # Print process found message once
         if running and not process_found_printed:
             print(f'Process found: "{GAME_PROCESS_NAME}" (PID: {pid})')
-            print("Started memory_reader...")
-            # Print hotkeys section after process found
-            print("-----------")
-            print("Hotkeys:")
-            for line in hotkey_manager.get_hotkey_info():
-                print(line)
             print("-----------")
             process_found_printed = True
     
     process_detector.process_status_changed.connect(on_process_status_changed)
+    
+    # Connect MemoryReader signals to ProcessDetector for state management
+    def on_process_attached():
+        """Called when MemoryReader successfully attaches to process."""
+        process_detector.set_attached()
+    
+    def on_process_died():
+        """Called when MemoryReader detects process death."""
+        print(f'Process lost: "{GAME_PROCESS_NAME}"')
+        process_detector.set_searching()
+        overlay.set_process_running(False)
+        memory_reader.set_process_running(False)
+        # Reset process found printed flag so it can print again when found
+        nonlocal process_found_printed
+        process_found_printed = False
+    
+    memory_reader.process_attached.connect(on_process_attached)
+    memory_reader.process_died.connect(on_process_died)
     
     # Connect enabled state changes: when overlay enabled state changes, update memory reader
     # Wrap the overlay's set_enabled_state to also update memory reader
@@ -266,23 +317,26 @@ def main():
     # Connect current health signal to overlay
     memory_reader.current_health_updated.connect(overlay.set_current_health)
     
-    # Start process detection
-    process_detector.start()
-    
-    # Register hotkeys
+    # Register hotkeys (will print hotkeys inside register_hotkeys())
     hotkey_manager = HotkeyManager(overlay, app, config)
     hotkey_manager.register_hotkeys()
     
-    # Start memory reader
-    memory_reader.start()
+    # Initial process check - always print "Searching process..." first
+    print(f'Searching process "{GAME_PROCESS_NAME}"...')
+    process_detector._searching_printed = True
     
-    # Initial process check
     initial_status, initial_pid = process_detector.check_process_running()
     if initial_status:
         on_process_status_changed(initial_status, initial_pid)
     else:
         overlay.set_process_running(False)
         memory_reader.set_process_running(False)
+    
+    # Start process detection (after initial check to avoid duplicate "Searching process" message)
+    process_detector.start()
+    
+    # Start memory reader
+    memory_reader.start()
     
     # Run application
     try:

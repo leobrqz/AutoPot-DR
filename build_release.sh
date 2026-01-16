@@ -2,7 +2,7 @@
 pyinstaller \
   --clean \
   --onefile \
-  --name="AutoPot-DR" \
+  --name="AutoPot-DR-v1.0.0" \
   --icon=../imgs/icon.ico \
   --add-data "../imgs;imgs" \
   --distpath release \

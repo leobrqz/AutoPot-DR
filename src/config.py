@@ -4,7 +4,6 @@ Handles loading, creating, and saving configuration file.
 """
 import os
 import configparser
-from pathlib import Path
 
 
 class Config:
@@ -27,6 +26,7 @@ class Config:
     
     def __init__(self):
         """Initialize config, create file if missing."""
+        print("Loading configuration...")
         self.config = configparser.ConfigParser()
         self._ensure_config_file()
         self._load_config()
