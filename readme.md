@@ -95,7 +95,4 @@ Customize the global hotkeys used to control the tool:
   - Close the application.
 
 
-## Credits
-
-
 
