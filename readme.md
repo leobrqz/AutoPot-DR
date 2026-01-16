@@ -3,17 +3,16 @@
 [![Dwarven Realms](https://img.shields.io/badge/Dwarven%20Realms%20Version-5.3.2.0-purple)]()
 [![Windows](https://img.shields.io/badge/Platform-Windows-blue)]()
 
-A Windows overlay tool that automatically uses potions when your HP drops below a configurable threshold. Features a PyQt5 overlay, hotkey controls, and direct memory reading for reliable automation.
+A game tool for Dwarven Realms that automatically uses potions when HP drops below a configurable threshold. Attaches to the game process via pymem and reads player health data from memory using iterative pointer dereferencing with pointer chain resolution. Memory reading runs in a separate background thread with thread-safe operation. Features a PyQt5 overlay window with transparency and always-on-top behavior, and is also thread-safe for responsiveness. 
 
-**⚠️Warning**: This tool is intended for **offline use only**. While it may work online, use it at your own risk and discretion.
+**⚠️ Warning**: This tool is intended for **offline use only**. While it may work online, use it at your own risk and discretion.
 
 
 
 **A few important notes:**
 
 * While it's not a guarantee of survival, it will save you most of the time. It works with any class or build, just make sure you always have enough potions!
-* Because of how the game handles health and damage over time (DoT), if you take a lot of DoT or very fast hits, your HP can drop below the threshold very quickly, multiple times or stay below the threshold even with potion drinks.
-* The potion will trigger as soon as your real HP drops below the threshold, but if the accumulated or incoming damage is higher than what a potion can heal, you might still die.
+* Because of how the game handles health and damage over time (DoT), if you take a lot of DoT or very fast hits, your HP can drop below the threshold very quickly, multiple times or stay below the threshold even with potion drinks. The potion will trigger as soon as your real HP drops below the threshold, but if the accumulated or incoming damage is higher than what a potion can heal, you might still die.
 
 
 ## ✨ Features
@@ -26,7 +25,7 @@ A Windows overlay tool that automatically uses potions when your HP drops below 
 * **Auto Potion**: Automatically triggers a potion when HP falls below a set percentage.
 * **Potion log**: The overlay displays a log of recent potion uses, showing HP values and timestamps for each use.
 * **Overlay UI**: Movable, lockable PyQt5 overlay showing status, HP, and logs.
-* **Customizable Hotkeys**: Easily change hotkeys for toggling, hiding, and closing the overlay.
+* **Customizable Hotkeys**: Easily change hotkeys for toggling ON/OFF, locking, and closing the overlay.
 * **Safe & Configurable**: All settings in a user-friendly config file.
 
 ## 🛠️ Setup Instructions
@@ -49,9 +48,9 @@ cd AutoPot-DR
 ```bash
 pip install -r requirements.txt
 ```
-Now either run it natively via python or build the executable.
+Now either run it with python or build the executable.
 
-### Run Natively with Python
+### Run with Python
 
 * Run the application:  
 ```bash
@@ -64,7 +63,7 @@ python src/main.py
 ```bash
 ./build_release.sh
 ```
-* The executable will be in the `release/` folder.
+* The executable will be in the `release` folder.
 
 ## ⚙️ Configuration
 
