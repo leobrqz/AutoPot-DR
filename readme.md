@@ -3,7 +3,7 @@
 [![Dwarven Realms](https://img.shields.io/badge/Dwarven%20Realms%20Version-5.3.2.0-purple)]()
 [![Windows](https://img.shields.io/badge/Platform-Windows-blue)]()
 
-A game tool for Dwarven Realms that automatically uses potions when HP drops below a configurable threshold. Attaches to the game process via pymem and reads player health data from memory using iterative pointer dereferencing with pointer chain resolution. Memory reading runs in a separate background thread with thread-safe operation. Features a PyQt5 overlay window with transparency and always-on-top behavior, and is also thread-safe for responsiveness. 
+A game tool for Dwarven Realms that automatically uses potions when HP drops below a configurable threshold and the player has at least one potion. Attaches to the game process via pymem and reads player health and potion count from memory using iterative pointer dereferencing. Memory reading runs in a separate background thread with thread-safe operation. Features a PyQt5 overlay window with transparency and always-on-top behavior and is also thread-safe for responsiveness. 
 
 **⚠️ Warning**: This tool is intended for **offline use only**. While it may work online, use it at your own risk and discretion.
 
@@ -19,12 +19,13 @@ A game tool for Dwarven Realms that automatically uses potions when HP drops bel
 
 <p align="center">
   <img src="imgs/OverlayOFF.png" alt="Overlay OFF" width="45%"/>
-  <img src="imgs/OverlayON.png" alt="Overlay ON" width="43.5%"/>
+  <img src="imgs/OverlayON.png" alt="Overlay ON" width="45%"/>
 </p>
 
-* **Auto Potion**: Automatically triggers a potion when HP falls below a set percentage.
-* **Potion log**: The overlay displays a log of recent potion uses, showing HP values and timestamps for each use.
-* **Overlay UI**: Movable, lockable PyQt5 overlay showing status, HP, and logs.
+* **Auto Potion**: Automatically triggers a potion when HP falls below a set percentage and the player has at least one potion (prevents spamming when out of potions).
+* **Potion count display**: The overlay shows the current potion count.
+* **Potion log**: The overlay displays a log of recent potion uses, showing HP values and timestamps for each use. The console log for each use also shows remaining potion count.
+* **Overlay UI**: Movable, lockable PyQt5 overlay showing status, potions, HP, and logs.
 * **Customizable Hotkeys**: Easily change hotkeys for toggling ON/OFF, locking, and closing the overlay.
 * **Safe & Configurable**: All settings in a user-friendly config file.
 

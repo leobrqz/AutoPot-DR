@@ -17,6 +17,8 @@ class Config:
     DEFAULT_MAX_HEALTH_OFFSETS = "0x30,0x940,0x5D0,0x2F0,0x370"
     DEFAULT_CURRENT_HEALTH_BASE_OFFSET = "0x064D8FD0"
     DEFAULT_CURRENT_HEALTH_OFFSETS = "0x30,0x8C8,0xB0,0x2F0,0x368"
+    DEFAULT_POTION_BASE_OFFSET = "0x064D8FD0"
+    DEFAULT_POTION_OFFSETS = "0x30,0x8A8,0xAC"
     DEFAULT_HOTKEY_LOCK = "home"
     DEFAULT_HOTKEY_TOGGLE = "insert"
     DEFAULT_HOTKEY_CLOSE = "end"
@@ -55,7 +57,9 @@ class Config:
             'max_health_base_offset': self.DEFAULT_MAX_HEALTH_BASE_OFFSET,
             'max_health_offsets': self.DEFAULT_MAX_HEALTH_OFFSETS,
             'current_health_base_offset': self.DEFAULT_CURRENT_HEALTH_BASE_OFFSET,
-            'current_health_offsets': self.DEFAULT_CURRENT_HEALTH_OFFSETS
+            'current_health_offsets': self.DEFAULT_CURRENT_HEALTH_OFFSETS,
+            'potion_base_offset': self.DEFAULT_POTION_BASE_OFFSET,
+            'potion_offsets': self.DEFAULT_POTION_OFFSETS
         }
         
         try:
@@ -107,6 +111,16 @@ class Config:
         """Get current health offsets as comma-separated hex string."""
         return self.config.get('POINTERCHAINS', 'current_health_offsets',
                               fallback=self.DEFAULT_CURRENT_HEALTH_OFFSETS)
+    
+    def get_potion_base_offset(self):
+        """Get potion base offset (hex string)."""
+        return self.config.get('POINTERCHAINS', 'potion_base_offset',
+                              fallback=self.DEFAULT_POTION_BASE_OFFSET)
+    
+    def get_potion_offsets(self):
+        """Get potion offsets as comma-separated hex string."""
+        return self.config.get('POINTERCHAINS', 'potion_offsets',
+                              fallback=self.DEFAULT_POTION_OFFSETS)
     
     def get_hotkey_lock(self):
         """Get hotkey for lock/unlock overlay."""

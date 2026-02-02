@@ -31,6 +31,7 @@ class OverlayWindow(QWidget):
         self._potion_log: List[Dict] = []  # List of {timestamp, health_amount, percentage}
         self._current_health = 0.0
         self._max_health = 0.0
+        self._potion_count = -1  # Sentinel for unknown/failed read
         
         self._init_ui()
         self._setup_window_properties()
@@ -47,6 +48,11 @@ class OverlayWindow(QWidget):
         self.status_label.setStyleSheet("font-size: 14px; font-weight: bold; background-color: transparent;")
         self._update_status_display()
         layout.addWidget(self.status_label)
+        
+        # Potions label
+        self.potions_label = QLabel("Potions: --")
+        self.potions_label.setStyleSheet("font-size: 12px; color: #CCCCCC; background-color: transparent;")
+        layout.addWidget(self.potions_label)
         
         # Combined health label
         self.health_label = QLabel("Health: -- | --")
@@ -206,6 +212,23 @@ class OverlayWindow(QWidget):
         """
         self._max_health = max_health if max_health > 0 else 0.0
         self._update_health_display()
+    
+    def _update_potion_display(self):
+        """Update the potions label."""
+        if self._potion_count < 0:
+            self.potions_label.setText("Potions: --")
+        else:
+            self.potions_label.setText(f"Potions: {self._potion_count}")
+    
+    def set_potion_count(self, value: int):
+        """
+        Update potion count display.
+        
+        Args:
+            value: Potion count (>= 0) or sentinel (< 0) for read failure
+        """
+        self._potion_count = value
+        self._update_potion_display()
     
     def add_potion_log_entry(self, health_amount: float, percentage: float):
         """

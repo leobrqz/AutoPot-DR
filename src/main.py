@@ -317,6 +317,9 @@ def main():
     # Connect current health signal to overlay
     memory_reader.current_health_updated.connect(overlay.set_current_health)
     
+    # Connect potion count signal to overlay
+    memory_reader.potion_count_updated.connect(overlay.set_potion_count)
+    
     # Register hotkeys (will print hotkeys inside register_hotkeys())
     hotkey_manager = HotkeyManager(overlay, app, config)
     hotkey_manager.register_hotkeys()

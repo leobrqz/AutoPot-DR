@@ -223,6 +223,8 @@ class MemoryReader(QObject):
     process_attached = pyqtSignal()
     # Signal emitted when process death is detected
     process_died = pyqtSignal()
+    # Signal emitted when potion count is read (-1 for read failure)
+    potion_count_updated = pyqtSignal(int)
     
     def __init__(self, config, process_name, potion_key="r"):
         """
@@ -252,6 +254,8 @@ class MemoryReader(QObject):
         self._process_id = None
         self._last_max_health_chain = None
         self._last_current_health_chain = None
+        self._potion_count_initialized = False
+        self._last_potion_chain = None
         self._attachment_notified = False  # Track if we've notified about current attachment
         self._last_chain_resolution_attempt = 0.0
         self._chain_resolution_cooldown = 1.0  # 1 second cooldown for chain resolution
@@ -273,9 +277,11 @@ class MemoryReader(QObject):
             self._module_base = None
             self._max_health_initialized = False
             self._current_health_initialized = False
+            self._potion_count_initialized = False
             self._process_id = None
             self._last_max_health_chain = None
             self._last_current_health_chain = None
+            self._last_potion_chain = None
             self._attachment_notified = False  # Reset so we can notify again on next attachment
     
     def start(self):
@@ -309,9 +315,11 @@ class MemoryReader(QObject):
         self._module_base = None
         self._max_health_initialized = False
         self._current_health_initialized = False
+        self._potion_count_initialized = False
         self._process_id = None
         self._last_max_health_chain = None
         self._last_current_health_chain = None
+        self._last_potion_chain = None
         self._attachment_notified = False
         if self._process_running:
             self.process_died.emit()
@@ -551,6 +559,69 @@ class MemoryReader(QObject):
         except Exception as e:
             print(f"[ERROR] Error initializing current health pointer: {e}")
     
+    def _initialize_potion_pointer(self):
+        """
+        Initialize and print potion pointer debug information once.
+        Prints all debug info when first successfully reading potion count.
+        """
+        if self._potion_count_initialized:
+            return
+        
+        current_time = time.time()
+        if current_time - self._last_chain_resolution_attempt < self._chain_resolution_cooldown:
+            return
+        self._last_chain_resolution_attempt = current_time
+        
+        try:
+            if self._pm is None or self._module_base is None:
+                return
+            
+            print("Potion pointer:")
+            print(f"[OK] Module: {self.process_name} | Base address: {hex(self._module_base)}")
+            
+            base_offset_str = self.config.get_potion_base_offset()
+            offsets_str = self.config.get_potion_offsets()
+            
+            base_offset = parse_address(base_offset_str)
+            if base_offset == 0:
+                print("[ERROR] Invalid potion base offset")
+                return
+            
+            offsets = parse_offsets(offsets_str)
+            if not offsets:
+                print("[ERROR] Invalid potion offsets")
+                return
+            
+            base_address = self._module_base + base_offset
+            
+            try:
+                final_address, chain_addresses = read_pointer_chain(self._pm, base_address, offsets, return_chain=True)
+                
+                current_pointer_path = tuple(chain_addresses[:-1])
+                if self._last_potion_chain != current_pointer_path:
+                    print("[DEBUG] Potion pointer chain resolved:")
+                    print(f"  Step 0: addr=0x{chain_addresses[0]:X}")
+                    for i, (addr, offset) in enumerate(zip(chain_addresses[1:], offsets), 1):
+                        print(f"  Step {i}: addr=0x{addr:X} offset=0x{offset:X}")
+                    self._last_potion_chain = current_pointer_path
+                
+                print(f"[OK] Final address: {hex(final_address)}")
+            except RuntimeError as e:
+                print(f"[ERROR] {e}")
+                return
+            
+            try:
+                potion_count = read_memory_int(self._pm, final_address)
+                if potion_count >= 0:
+                    print(f"[RESULT] Player Potion Count: {potion_count}")
+                    self._potion_count_initialized = True
+                    print("-------------")
+            except Exception as e:
+                print(f"[ERROR] Failed to read final int value: {e}")
+                
+        except Exception as e:
+            print(f"[ERROR] Error initializing potion pointer: {e}")
+    
     def _read_current_health(self) -> float:
         """
         Read current health using pointer chain.
@@ -605,14 +676,46 @@ class MemoryReader(QObject):
     
     def _read_potion_count(self) -> int:
         """
-        Placeholder for reading potion count.
-        Currently returns 0 and does not affect the program.
+        Read potion count using pointer chain.
         
         Returns:
-            Potion count (int)
+            Potion count (int >= 0) on success, -1 on read failure
         """
-        # Placeholder - not implemented yet
-        return 0
+        try:
+            if self._pm is None or self._module_base is None:
+                return -1
+            
+            if not self._potion_count_initialized:
+                self._initialize_potion_pointer()
+            
+            base_offset_str = self.config.get_potion_base_offset()
+            offsets_str = self.config.get_potion_offsets()
+            
+            base_offset = parse_address(base_offset_str)
+            if base_offset == 0:
+                return -1
+            
+            offsets = parse_offsets(offsets_str)
+            if not offsets:
+                return -1
+            
+            base_address = self._module_base + base_offset
+            
+            final_address = read_pointer_chain(self._pm, base_address, offsets)
+            
+            potion_count = read_memory_int(self._pm, final_address)
+            if potion_count < 0:
+                return -1
+            return potion_count
+        except RuntimeError:
+            return -1
+        except Exception as e:
+            if not self._potion_count_initialized:
+                current_time = time.time()
+                if current_time - self._last_error_print_time >= self._error_print_cooldown:
+                    print(f"[ERROR] Error reading potion count: {e}")
+                    self._last_error_print_time = current_time
+            return -1
     
     def _use_potion(self):
         """Send potion keypress. Ensures game window is focused first."""
@@ -661,14 +764,18 @@ class MemoryReader(QObject):
                     # Emit signal for overlay to update display
                     self.current_health_updated.emit(current_health)
                 
+                # Read potion count using pointer chain
+                potion_count = self._read_potion_count()
+                self.potion_count_updated.emit(potion_count)
+                
                 # Potion logic
-                if max_health > 0 and current_health >= 0:
+                if max_health > 0 and current_health >= 0 and potion_count > 0:
                     threshold_percentage = self.config.get_health_threshold()
                     threshold_value = (max_health * threshold_percentage) / 100.0
                     current_time = time.time()
                     time_since_last_potion = current_time - self._last_potion_time
                     
-                    # Check if health is below threshold
+                    # Check if health is below threshold and player has potions
                     if current_health < threshold_value:
                         # Potion logic: wait 500ms between potion drinks
                         if time_since_last_potion >= self._potion_cooldown:
@@ -682,7 +789,8 @@ class MemoryReader(QObject):
                             # Print to console with same format as overlay
                             timestamp = datetime.now().strftime("%H:%M:%S")
                             health_amount = int(current_health)
-                            print(f"[LOG] {timestamp} - {health_amount} - {health_percentage:.1f}%")
+                            remaining = potion_count - 1
+                            print(f"[LOG] {timestamp} - {health_amount} - {health_percentage:.1f}% - {remaining} potions remaining")
                 
                 # Check every 10ms
                 time.sleep(self.MEMORY_READ_INTERVAL)
