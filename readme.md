@@ -1,7 +1,11 @@
+<div align="center">
+
 # Auto Potion Tool 🧌
 
-[![Dwarven Realms](https://img.shields.io/badge/Dwarven%20Realms%20Version-5.3.2.0-purple)]()
+[![Dwarven Realms](https://img.shields.io/badge/Dwarven%20Realms%20-5.3.2.0-purple)]()
 [![Windows](https://img.shields.io/badge/Platform-Windows-blue)]()
+
+</div>
 
 A game tool for Dwarven Realms that automatically uses potions when HP drops below a configurable threshold and the player has at least one potion. Attaches to the game process via pymem and reads player health and potion count from memory using iterative pointer dereferencing. Memory reading runs in a separate background thread with thread-safe operation. Features a PyQt5 overlay window with transparency and always-on-top behavior and is also thread-safe for responsiveness. 
 
