@@ -12,3 +12,5 @@ config_user.ini
 
 project
 
+notes/
+.codex
