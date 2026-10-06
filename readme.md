@@ -7,7 +7,7 @@
 
 </div>
 
-A game tool for Dwarven Realms that automatically uses potions when HP drops below a configurable threshold and the player has at least one potion. It attaches to the game process via pymem and resolves health and potion fields through Unreal's live object graph and reflected property names. Health, maximum health, available potions, and maximum potions are looked up at runtime instead of using a pointer chain for each value. It validates known module-relative hints for Unreal globals and scans writable module data if those globals move; unsupported Unreal layouts are rejected without sending inputs. Memory reading runs in a separate background thread with thread-safe operation. Features a PyQt5 overlay window with transparency and always-on-top behavior and is also thread-safe for responsiveness. 
+A game tool for Dwarven Realms that automatically uses potions when HP drops below a configurable threshold and the player has at least one potion. It attaches to the game process via pymem and resolves health, energy (the game's mana-like resource), and potion fields through Unreal's live object graph and reflected property names. Health, energy, and potion values are looked up at runtime instead of using a pointer chain for each value. It validates known module-relative hints for Unreal globals and scans writable module data if those globals move; unsupported Unreal layouts are rejected without sending inputs. Memory reading runs in a separate background thread with thread-safe operation. Features a PyQt5 overlay window with transparency and always-on-top behavior and is also thread-safe for responsiveness.
 
 **⚠️ Warning**: This tool is intended for **offline use only**. While it may work online, use it at your own risk and discretion.
 
@@ -28,8 +28,9 @@ A game tool for Dwarven Realms that automatically uses potions when HP drops bel
 
 * **Auto Potion**: Automatically triggers a potion when HP falls below a set percentage and the player has at least one potion (prevents spamming when out of potions).
 * **Potion count display**: The overlay shows available potions and the maximum capacity.
+* **Energy display**: The overlay shows current and maximum Energy, the game's mana-like resource.
 * **Potion log**: The overlay displays a log of recent potion uses, showing HP values and timestamps for each use. The console log for each use also shows remaining potion count.
-* **Overlay UI**: Movable, lockable PyQt5 overlay showing status, potions, HP, and logs.
+* **Overlay UI**: Movable, lockable PyQt5 overlay showing status, potions, HP, Energy, and logs.
 * **Customizable Hotkeys**: Easily change hotkeys for toggling ON/OFF, locking, and closing the overlay.
 * **Safe & Configurable**: All settings in a user-friendly config file.
 

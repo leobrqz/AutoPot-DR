@@ -279,7 +279,7 @@ class UnrealReflectionReader:
         return self._ptr(data)
 
     def resolve(self):
-        """Resolve and validate live health and potion field addresses."""
+        """Resolve and validate live health, energy, and potion field addresses."""
         if self._world_source_address is not None:
             try:
                 world = self._ptr(self._world_source_address)
@@ -416,6 +416,18 @@ class UnrealReflectionReader:
 
         health_address, health_size = self._property(pawn, "Health", expected_size=8)
         max_health_address, max_health_size = self._property(pawn, "MaxHealth", expected_size=8)
+        # Energy is optional so health/potion reads survive an independent
+        # resource-property change in a future game build.
+        try:
+            energy_address, energy_size = self._property(
+                pawn, "Energy", expected_size=8
+            )
+            max_energy_address, max_energy_size = self._property(
+                pawn, "MaxEnergy", expected_size=8
+            )
+        except UnrealReflectionError:
+            energy_address = max_energy_address = None
+            energy_size = max_energy_size = None
         current_potions_address, current_potions_size = self._property(
             potion_manager, "Available Potions", expected_size=4
         )
@@ -433,10 +445,14 @@ class UnrealReflectionReader:
             "potion_manager": potion_manager,
             "health": health_address,
             "max_health": max_health_address,
+            "energy": energy_address,
+            "max_energy": max_energy_address,
             "current_potions": current_potions_address,
             "max_potions": max_potions_address,
             "health_size": health_size,
             "max_health_size": max_health_size,
+            "energy_size": energy_size,
+            "max_energy_size": max_energy_size,
             "current_potions_size": current_potions_size,
             "max_potions_size": max_potions_size,
             "pawn_class": self._object_name(pawn_class),

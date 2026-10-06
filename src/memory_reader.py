@@ -116,6 +116,9 @@ class MemoryReader(QObject):
     max_health_updated = pyqtSignal(float)  # max_health value
     # Signal emitted when current health is read
     current_health_updated = pyqtSignal(float)  # current_health value
+    # Signals emitted when the player's energy (the game's mana-like resource) is read
+    max_energy_updated = pyqtSignal(float)  # max_energy value
+    current_energy_updated = pyqtSignal(float)  # current_energy value
     # Signal emitted when process is successfully attached
     process_attached = pyqtSignal()
     # Signal emitted when process death is detected
@@ -151,6 +154,7 @@ class MemoryReader(QObject):
         self._unreal_targets = None
         self._next_unreal_resolution = 0.0
         self._last_unreal_resolution = None
+        self._last_energy_debug_signature = None
         self._attachment_notified = False  # Track if we've notified about current attachment
         self._last_error_print_time = 0.0
         self._error_print_cooldown = 1.0  # 1 second cooldown for error prints
@@ -202,6 +206,7 @@ class MemoryReader(QObject):
         self._unreal_targets = None
         self._next_unreal_resolution = 0.0
         self._last_unreal_resolution = None
+        self._last_energy_debug_signature = None
     
     def _handle_process_death(self):
         """Handle process death - cleanup state and emit signal."""
@@ -284,6 +289,7 @@ class MemoryReader(QObject):
                 print(
                     "[OK] Unreal reflection resolved: "
                     f"{targets['pawn_class']} health + "
+                    "energy + "
                     f"{targets['manager_class']} potion state"
                 )
                 self._last_unreal_resolution = signature
@@ -297,10 +303,10 @@ class MemoryReader(QObject):
             return None
 
     def _read_game_state(self):
-        """Read health and potion values from the resolved reflected fields."""
+        """Read health, energy, and potion values from reflected fields."""
         targets = self._resolve_unreal_targets()
         if targets is None or self._pm is None:
-            return 0.0, -1.0, -1, -1
+            return 0.0, -1.0, 0.0, -1.0, -1, -1
 
         try:
             max_health = struct.unpack(
@@ -309,6 +315,38 @@ class MemoryReader(QObject):
             current_health = struct.unpack(
                 "<d", self._pm.read_bytes(targets["health"], 8)
             )[0]
+            energy_available = (
+                targets.get("energy") is not None
+                and targets.get("max_energy") is not None
+            )
+            if energy_available:
+                try:
+                    max_energy = struct.unpack(
+                        "<d", self._pm.read_bytes(targets["max_energy"], 8)
+                    )[0]
+                    current_energy = struct.unpack(
+                        "<d", self._pm.read_bytes(targets["energy"], 8)
+                    )[0]
+                    if (
+                        not math.isfinite(max_energy)
+                        or not math.isfinite(current_energy)
+                        or max_energy <= 0
+                        or max_energy > 100000000
+                        or current_energy < 0
+                        or current_energy > 100000000
+                    ):
+                        raise UnrealReflectionError("Energy values did not validate")
+                except Exception as exc:
+                    energy_available = False
+                    error_time = time.time()
+                    if error_time - self._last_error_print_time >= self._error_print_cooldown:
+                        print(f"[WARN] Could not read optional Energy values: {exc}")
+                        self._last_error_print_time = error_time
+                    max_energy = 0.0
+                    current_energy = -1.0
+            else:
+                max_energy = 0.0
+                current_energy = -1.0
             current_potions = self._pm.read_int(targets["current_potions"])
             max_potions = self._pm.read_int(targets["max_potions"])
 
@@ -326,7 +364,28 @@ class MemoryReader(QObject):
             if max_potions < 0 or max_potions > 10000:
                 max_potions = -1
 
-            return max_health, current_health, current_potions, max_potions
+            energy_signature = (
+                targets["pawn"], targets["energy"], targets["max_energy"]
+            ) if energy_available else None
+            if (
+                energy_available
+                and energy_signature != self._last_energy_debug_signature
+            ):
+                print(
+                    "[RESULT] Player Energy/Mana: "
+                    f"{current_energy:g} / {max_energy:g} "
+                    "(reflected Energy / MaxEnergy)"
+                )
+                self._last_energy_debug_signature = energy_signature
+
+            return (
+                max_health,
+                current_health,
+                max_energy,
+                current_energy,
+                current_potions,
+                max_potions,
+            )
         except Exception as exc:
             # Force a fresh object walk on the next read after a map or pawn change.
             self._unreal_targets = None
@@ -335,7 +394,7 @@ class MemoryReader(QObject):
             if error_time - self._last_error_print_time >= self._error_print_cooldown:
                 print(f"[ERROR] Could not read reflected player state: {exc}")
                 self._last_error_print_time = error_time
-            return 0.0, -1.0, -1, -1
+            return 0.0, -1.0, 0.0, -1.0, -1, -1
 
     def _use_potion(self):
         """Send potion keypress. Ensures game window is focused first."""
@@ -372,9 +431,18 @@ class MemoryReader(QObject):
                 
                 # Resolve the object graph once, then read current values from
                 # reflected health and potion properties.
-                max_health, current_health, potion_count, max_potions = self._read_game_state()
+                (
+                    max_health,
+                    current_health,
+                    max_energy,
+                    current_energy,
+                    potion_count,
+                    max_potions,
+                ) = self._read_game_state()
                 self.max_health_updated.emit(max_health)
                 self.current_health_updated.emit(current_health)
+                self.max_energy_updated.emit(max_energy)
+                self.current_energy_updated.emit(current_energy)
                 self.potion_count_updated.emit(potion_count)
                 self.max_potion_count_updated.emit(max_potions)
                 

@@ -316,6 +316,10 @@ def main():
     
     # Connect current health signal to overlay
     memory_reader.current_health_updated.connect(overlay.set_current_health)
+
+    # Connect the game's energy (mana-like resource) signals to the overlay
+    memory_reader.max_energy_updated.connect(overlay.set_max_energy)
+    memory_reader.current_energy_updated.connect(overlay.set_current_energy)
     
     # Connect potion count signal to overlay
     memory_reader.potion_count_updated.connect(overlay.set_potion_count)
