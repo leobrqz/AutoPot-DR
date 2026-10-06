@@ -31,6 +31,7 @@ class UnrealReflectionReader:
         self._writable_sections_cache = None
         self._world_candidate_sources = None
         self._world_candidate_scan_after = 0.0
+        self._world_candidate_scan_performed = False
         self._world_source_address = None
         self._fname_pool = self._find_fname_pool()
 
@@ -295,13 +296,22 @@ class UnrealReflectionReader:
         except Exception:
             pass
 
+        candidates = self._find_world_candidates()
         valid_worlds = {}
-        for source_address, world in self._find_world_candidates():
+        for source_address, world in candidates:
             try:
                 targets = self._resolve_from_world(world, source_address)
             except Exception:
                 continue
             valid_worlds[world] = (source_address, targets)
+
+        if not valid_worlds and candidates:
+            # Cached slots can still point to UWorld objects whose player graph
+            # is obsolete. Drop them and allow one fresh scan; subsequent scans
+            # remain rate-limited below while the world graph is unavailable.
+            self._world_candidate_sources = None
+            if not self._world_candidate_scan_performed:
+                self._world_candidate_scan_after = 0.0
 
         if len(valid_worlds) != 1:
             raise UnrealReflectionError(
@@ -314,9 +324,12 @@ class UnrealReflectionReader:
 
     def _find_world_candidates(self):
         """Find UWorld object references in writable module data."""
+        now = time.monotonic()
+        self._world_candidate_scan_performed = False
+
         if self._world_candidate_sources is not None:
             if not self._world_candidate_sources:
-                if time.monotonic() < self._world_candidate_scan_after:
+                if now < self._world_candidate_scan_after:
                     return []
             else:
                 candidates = []
@@ -335,7 +348,11 @@ class UnrealReflectionReader:
                 # A fresh scan may find the global slot after a map/layout change.
                 self._world_candidate_sources = None
 
-        self._world_candidate_scan_after = time.monotonic() + 2.0
+        if now < self._world_candidate_scan_after:
+            return []
+
+        self._world_candidate_scan_after = now + 2.0
+        self._world_candidate_scan_performed = True
 
         candidates = []
         seen_objects = set()
