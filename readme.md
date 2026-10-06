@@ -63,6 +63,17 @@ Now either run it with python or build the executable.
 python src/main.py
 ```
 
+### Run the standalone console version
+
+`src/standalone/autopot_standalone.py` is a self-contained, no-GUI version with the Unreal reflection resolver and potion logic included. It needs only `pymem` and `keyboard`:
+
+```bash
+pip install pymem keyboard
+python src/standalone/autopot_standalone.py --threshold 30
+```
+
+Use `python src/standalone/autopot_standalone.py --dry-run` to see when it would use a potion without sending a keypress. Press `Ctrl+C` to stop it. This tool is intended for offline use.
+
 ### Build the Executable Yourself
 
 * Build the executable with PyInstaller:  
