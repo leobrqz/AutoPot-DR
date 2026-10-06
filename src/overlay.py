@@ -31,6 +31,8 @@ class OverlayWindow(QWidget):
         self._potion_log: List[Dict] = []  # List of {timestamp, health_amount, percentage}
         self._current_health = 0.0
         self._max_health = 0.0
+        self._current_energy = -1.0
+        self._max_energy = 0.0
         self._potion_count = -1  # Sentinel for unknown/failed read
         self._max_potion_count = -1  # Sentinel for unknown/failed read
         
@@ -59,6 +61,11 @@ class OverlayWindow(QWidget):
         self.health_label = QLabel("Health: -- | --")
         self.health_label.setStyleSheet("font-size: 12px; color: #CCCCCC; background-color: transparent;")
         layout.addWidget(self.health_label)
+
+        # The game calls this resource Energy; it is the mana-like 100/100 value.
+        self.energy_label = QLabel("Energy/Mana: -- | --")
+        self.energy_label.setStyleSheet("font-size: 12px; color: #CCCCCC; background-color: transparent;")
+        layout.addWidget(self.energy_label)
         
         # Threshold label
         self.threshold_label = QLabel("Threshold: -- | --%")
@@ -213,6 +220,25 @@ class OverlayWindow(QWidget):
         """
         self._max_health = max_health if max_health > 0 else 0.0
         self._update_health_display()
+
+    def _update_energy_display(self):
+        """Update the game's energy (mana-like resource) display."""
+        if self._max_energy > 0 and self._current_energy >= 0:
+            self.energy_label.setText(
+                f"Energy/Mana: {self._current_energy:.1f} | {self._max_energy:.1f}"
+            )
+        else:
+            self.energy_label.setText("Energy/Mana: -- | --")
+
+    def set_current_energy(self, current_energy: float):
+        """Update current energy, which is the game's mana-like resource."""
+        self._current_energy = current_energy if current_energy >= 0 else -1.0
+        self._update_energy_display()
+
+    def set_max_energy(self, max_energy: float):
+        """Update the maximum energy value."""
+        self._max_energy = max_energy if max_energy > 0 else 0.0
+        self._update_energy_display()
     
     def _update_potion_display(self):
         """Update the potions label."""

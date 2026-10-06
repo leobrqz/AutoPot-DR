@@ -1,3 +1,32 @@
+#!/usr/bin/env python3
+"""Single-file, console-only AutoPot for offline Dwarven Realms sessions.
+
+Requires: pip install pymem keyboard
+Usage:    python src/standalone/autopot_standalone.py --threshold 30
+Dry run:  python src/standalone/autopot_standalone.py --dry-run
+
+The Unreal reflection reader below is embedded so this file can be shared by
+itself. It reads process memory but never writes to game memory.
+"""
+import argparse
+import ctypes
+import math
+import struct
+import sys
+import time
+from ctypes import wintypes
+
+import keyboard
+import pymem
+import pymem.process
+
+GAME_PROCESS_NAME = "ProjectAlpha-Win64-Shipping.exe"
+DEFAULT_POTION_KEY = "r"
+POLL_INTERVAL_SECONDS = 0.05
+RESOLVE_INTERVAL_SECONDS = 0.25
+POTION_COOLDOWN_SECONDS = 0.5
+MAX_VALID_VALUE = 100000000
+
 """Read player state from Unreal's live object graph and reflected properties.
 
 Only the module-relative engine globals are build-specific. Object links and
@@ -279,7 +308,7 @@ class UnrealReflectionReader:
         return self._ptr(data)
 
     def resolve(self):
-        """Resolve and validate live health, energy, and potion field addresses."""
+        """Resolve and validate live health and potion field addresses."""
         if self._world_source_address is not None:
             try:
                 world = self._ptr(self._world_source_address)
@@ -416,18 +445,6 @@ class UnrealReflectionReader:
 
         health_address, health_size = self._property(pawn, "Health", expected_size=8)
         max_health_address, max_health_size = self._property(pawn, "MaxHealth", expected_size=8)
-        # Energy is optional so health/potion reads survive an independent
-        # resource-property change in a future game build.
-        try:
-            energy_address, energy_size = self._property(
-                pawn, "Energy", expected_size=8
-            )
-            max_energy_address, max_energy_size = self._property(
-                pawn, "MaxEnergy", expected_size=8
-            )
-        except UnrealReflectionError:
-            energy_address = max_energy_address = None
-            energy_size = max_energy_size = None
         current_potions_address, current_potions_size = self._property(
             potion_manager, "Available Potions", expected_size=4
         )
@@ -445,16 +462,275 @@ class UnrealReflectionReader:
             "potion_manager": potion_manager,
             "health": health_address,
             "max_health": max_health_address,
-            "energy": energy_address,
-            "max_energy": max_energy_address,
             "current_potions": current_potions_address,
             "max_potions": max_potions_address,
             "health_size": health_size,
             "max_health_size": max_health_size,
-            "energy_size": energy_size,
-            "max_energy_size": max_energy_size,
             "current_potions_size": current_potions_size,
             "max_potions_size": max_potions_size,
             "pawn_class": self._object_name(pawn_class),
             "manager_class": manager_class_name,
         }
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Offline console AutoPot for Dwarven Realms (no GUI)."
+    )
+    parser.add_argument(
+        "--threshold",
+        type=float,
+        default=30.0,
+        help="Use a potion below this health percentage (default: 30).",
+    )
+    parser.add_argument(
+        "--key",
+        default=DEFAULT_POTION_KEY,
+        help="Game key that uses a potion (default: r).",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show when a potion would be used without sending a keypress.",
+    )
+    args = parser.parse_args()
+    if not 0 <= args.threshold <= 100:
+        parser.error("--threshold must be between 0 and 100")
+    if not args.key:
+        parser.error("--key cannot be empty")
+    return args
+
+
+def _is_game_focused(process_id):
+    if sys.platform != "win32":
+        return False
+    hwnd = ctypes.windll.user32.GetForegroundWindow()
+    if not hwnd:
+        return False
+    foreground_pid = wintypes.DWORD()
+    ctypes.windll.user32.GetWindowThreadProcessId(
+        hwnd, ctypes.byref(foreground_pid)
+    )
+    return foreground_pid.value == process_id
+
+
+def _focus_game_window(process_id):
+    if sys.platform != "win32":
+        return False
+
+    user32 = ctypes.windll.user32
+    found_window = [False]
+
+    def enum_windows_callback(hwnd, _lparam):
+        window_pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(window_pid))
+        if window_pid.value == process_id and user32.IsWindowVisible(hwnd):
+            found_window[0] = True
+            user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+            user32.SetForegroundWindow(hwnd)
+            return False
+        return True
+
+    callback_type = ctypes.WINFUNCTYPE(
+        ctypes.c_bool, wintypes.HWND, wintypes.LPARAM
+    )
+    callback = callback_type(enum_windows_callback)
+    user32.EnumWindows(callback, 0)
+    return found_window[0]
+
+
+def _send_potion_key(process_id, key, dry_run):
+    if dry_run:
+        return True
+
+    if not _is_game_focused(process_id):
+        _focus_game_window(process_id)
+        deadline = time.monotonic() + 0.5
+        while time.monotonic() < deadline and not _is_game_focused(process_id):
+            time.sleep(0.025)
+
+    if not _is_game_focused(process_id):
+        print("[WARN] Game window is not focused; skipped the potion keypress.")
+        return False
+
+    pressed = False
+    try:
+        keyboard.press(key)
+        pressed = True
+        time.sleep(0.01)
+        keyboard.release(key)
+        pressed = False
+        return True
+    except Exception as exc:
+        print(f"[ERROR] Could not send potion key: {exc}")
+        return False
+    finally:
+        if pressed:
+            try:
+                keyboard.release(key)
+            except Exception:
+                pass
+
+
+def _read_player_state(process, targets):
+    max_health = struct.unpack(
+        "<d", process.read_bytes(targets["max_health"], 8)
+    )[0]
+    current_health = struct.unpack(
+        "<d", process.read_bytes(targets["health"], 8)
+    )[0]
+    current_potions = process.read_int(targets["current_potions"])
+    max_potions = process.read_int(targets["max_potions"])
+
+    if (
+        not math.isfinite(max_health)
+        or not math.isfinite(current_health)
+        or max_health <= 0
+        or max_health > MAX_VALID_VALUE
+        or current_health < 0
+        or current_health > MAX_VALID_VALUE
+    ):
+        raise UnrealReflectionError("Health values did not validate")
+    if current_potions < 0 or current_potions > 10000:
+        current_potions = -1
+    if max_potions < 0 or max_potions > 10000:
+        max_potions = -1
+    return current_health, max_health, current_potions, max_potions
+
+
+def _monitor_process(process, module_base, args):
+    reader = UnrealReflectionReader(process, module_base)
+    targets = None
+    next_resolve_at = 0.0
+    next_liveness_check_at = 0.0
+    last_resolution_signature = None
+    last_state = None
+    last_warning_at = 0.0
+    last_potion_attempt_at = 0.0
+
+    print(
+        f"[INFO] Monitoring {GAME_PROCESS_NAME}; threshold="
+        f"{args.threshold:g}%; potion key={args.key!r}; "
+        f"dry_run={args.dry_run}. Press Ctrl+C to stop."
+    )
+
+    while True:
+        now = time.monotonic()
+        if now >= next_liveness_check_at:
+            # Detect process exit even while Unreal's world graph is unavailable.
+            process.read_bytes(module_base, 1)
+            next_liveness_check_at = now + 1.0
+
+        if now >= next_resolve_at:
+            try:
+                targets = reader.resolve()
+                next_resolve_at = now + RESOLVE_INTERVAL_SECONDS
+                signature = (
+                    targets["world"],
+                    targets["controller"],
+                    targets["pawn"],
+                    targets["potion_manager"],
+                )
+                if signature != last_resolution_signature:
+                    print(
+                        "[OK] Resolved local player: "
+                        f"{targets['pawn_class']} health + "
+                        f"{targets['manager_class']} potion state."
+                    )
+                    last_resolution_signature = signature
+            except Exception as exc:
+                targets = None
+                next_resolve_at = now + 0.5
+                if now - last_warning_at >= 1.0:
+                    print(f"[WARN] Waiting for the player graph: {exc}")
+                    last_warning_at = now
+
+        if targets is not None:
+            try:
+                current_health, max_health, potions, max_potions = (
+                    _read_player_state(process, targets)
+                )
+                state = (
+                    round(current_health, 1),
+                    round(max_health, 1),
+                    potions,
+                    max_potions,
+                )
+                if state != last_state:
+                    print(
+                        f"[STATE] Health {current_health:.1f}/{max_health:.1f} | "
+                        f"Potions {potions}/{max_potions}"
+                    )
+                    last_state = state
+
+                threshold_value = max_health * args.threshold / 100.0
+                now = time.monotonic()
+                if (
+                    potions > 0
+                    and current_health < threshold_value
+                    and now - last_potion_attempt_at >= POTION_COOLDOWN_SECONDS
+                ):
+                    if _send_potion_key(process.process_id, args.key, args.dry_run):
+                        if args.dry_run:
+                            print(
+                                f"[DRY RUN] Would use potion at "
+                                f"{current_health:.1f}/{max_health:.1f} health; "
+                                f"{potions} available."
+                            )
+                        else:
+                            print(
+                                f"[ACTION] Potion key sent at "
+                                f"{current_health:.1f}/{max_health:.1f} health; "
+                                f"{potions} available."
+                            )
+                    last_potion_attempt_at = now
+            except Exception as exc:
+                targets = None
+                next_resolve_at = 0.0
+                if now - last_warning_at >= 1.0:
+                    print(f"[WARN] Could not read player state; re-resolving: {exc}")
+                    last_warning_at = now
+
+        time.sleep(POLL_INTERVAL_SECONDS)
+
+
+def main():
+    args = parse_args()
+    last_missing_message_at = 0.0
+
+    while True:
+        process = None
+        try:
+            process = pymem.Pymem(GAME_PROCESS_NAME)
+            module = pymem.process.module_from_name(
+                process.process_handle, GAME_PROCESS_NAME
+            )
+            if module is None:
+                raise RuntimeError(f"Could not find module {GAME_PROCESS_NAME}")
+            print(f"[OK] Attached to game PID {process.process_id}.")
+            _monitor_process(process, module.lpBaseOfDll, args)
+        except KeyboardInterrupt:
+            print("\n[INFO] Standalone AutoPot stopped.")
+            return
+        except pymem.exception.ProcessNotFound:
+            now = time.monotonic()
+            if now - last_missing_message_at >= 5.0:
+                print(f"[WAIT] Start {GAME_PROCESS_NAME} to attach.")
+                last_missing_message_at = now
+            time.sleep(1.0)
+        except Exception as exc:
+            now = time.monotonic()
+            if now - last_missing_message_at >= 1.0:
+                print(f"[ERROR] {exc}")
+                last_missing_message_at = now
+            time.sleep(1.0)
+        finally:
+            if process is not None:
+                try:
+                    process.close_process()
+                except Exception:
+                    pass
+
+
+if __name__ == "__main__":
+    main()
