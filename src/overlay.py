@@ -32,6 +32,7 @@ class OverlayWindow(QWidget):
         self._current_health = 0.0
         self._max_health = 0.0
         self._potion_count = -1  # Sentinel for unknown/failed read
+        self._max_potion_count = -1  # Sentinel for unknown/failed read
         
         self._init_ui()
         self._setup_window_properties()
@@ -217,8 +218,12 @@ class OverlayWindow(QWidget):
         """Update the potions label."""
         if self._potion_count < 0:
             self.potions_label.setText("Potions: --")
-        else:
+        elif self._max_potion_count < 0:
             self.potions_label.setText(f"Potions: {self._potion_count}")
+        else:
+            self.potions_label.setText(
+                f"Potions: {self._potion_count} | {self._max_potion_count}"
+            )
     
     def set_potion_count(self, value: int):
         """
@@ -228,6 +233,11 @@ class OverlayWindow(QWidget):
             value: Potion count (>= 0) or sentinel (< 0) for read failure
         """
         self._potion_count = value
+        self._update_potion_display()
+
+    def set_max_potion_count(self, value: int):
+        """Update maximum potion capacity in the overlay."""
+        self._max_potion_count = value
         self._update_potion_display()
     
     def add_potion_log_entry(self, health_amount: float, percentage: float):
