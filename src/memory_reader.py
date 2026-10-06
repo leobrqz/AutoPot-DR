@@ -5,6 +5,7 @@ Reads game memory and automatically uses potions when health falls below thresho
 import time
 import threading
 import struct
+import math
 import sys
 import ctypes
 from ctypes import wintypes
@@ -13,6 +14,7 @@ import pymem
 import pymem.process
 import keyboard
 from PyQt5.QtCore import QObject, pyqtSignal
+from unreal_reader import UnrealReflectionError, UnrealReflectionReader
 
 
 # ============================================================================
@@ -81,41 +83,6 @@ else:
 # Base Memory Reading Functions
 # ============================================================================
 
-def read_pointer_chain(pm, base_address, offsets, return_chain=False):
-    """
-    Resolves a multi-level pointer chain and returns the final address.
-    
-    Args:
-        pm: Pymem instance
-        base_address: Starting address (int)
-        offsets: List of offsets (list of int)
-        return_chain: If True, returns tuple (final_address, chain_addresses)
-    
-    Returns:
-        Final address after following pointer chain, or tuple (final_address, chain_addresses) if return_chain=True
-    """
-    addr = base_address
-    chain_addresses = [base_address]  # Start with base address
-    
-    for i, offset in enumerate(offsets):
-        try:
-            # Read pointer (8 bytes because it's a 64-bit process)
-            addr = pm.read_ulonglong(addr)
-            if addr == 0:
-                raise RuntimeError(f"Read null pointer at level {i} (address: {hex(chain_addresses[-1])})")
-            if addr < 4096 and i < len(offsets) - 1:
-                raise RuntimeError(f"Address too low ({hex(addr)}) at level {i}")
-        except pymem.exception.MemoryReadError as e:
-            raise RuntimeError(f"Failed to read pointer at level {i} (address: {hex(chain_addresses[-1])}): {e}")
-        
-        addr += offset
-        chain_addresses.append(addr)
-    
-    if return_chain:
-        return addr, chain_addresses
-    return addr
-
-
 def get_module_base_address(pm, process_name):
     """
     Get module base address for the process.
@@ -134,76 +101,6 @@ def get_module_base_address(pm, process_name):
         return None
 
 
-def parse_address(address_str: str) -> int:
-    """
-    Parse address string to integer.
-    
-    Args:
-        address_str: Address as string (e.g., "0x12345" or "0x00000")
-    
-    Returns:
-        Integer address value
-    """
-    try:
-        if address_str.startswith("0x") or address_str.startswith("0X"):
-            return int(address_str, 16)
-        return int(address_str)
-    except (ValueError, AttributeError):
-        return 0
-
-
-def parse_offsets(offsets_str: str) -> list:
-    """
-    Parse comma-separated hex offsets string to list of integers.
-    
-    Args:
-        offsets_str: Comma-separated hex offsets (e.g., "0x28,0x530,0x10")
-    
-    Returns:
-        List of integer offsets
-    """
-    offsets = []
-    try:
-        for offset_str in offsets_str.split(','):
-            offset_str = offset_str.strip()
-            if offset_str.startswith("0x") or offset_str.startswith("0X"):
-                offsets.append(int(offset_str, 16))
-            else:
-                offsets.append(int(offset_str))
-    except (ValueError, AttributeError):
-        pass
-    return offsets
-
-
-def read_memory_float(pm, address: int) -> float:
-    """Read float value from memory address."""
-    try:
-        if address == 0:
-            return 0.0
-        return pm.read_float(address)
-    except Exception:
-        return 0.0
-
-
-def read_memory_double(pm, address: int) -> float:
-    """Read double value from memory address."""
-    try:
-        if address == 0:
-            return 0.0
-        raw = pm.read_bytes(address, 8)
-        return struct.unpack("<d", raw)[0]
-    except Exception:
-        return 0.0
-
-
-def read_memory_int(pm, address: int) -> int:
-    """Read integer value from memory address."""
-    try:
-        if address == 0:
-            return 0
-        return pm.read_int(address)
-    except Exception:
-        return 0
 
 
 # ============================================================================
@@ -225,6 +122,8 @@ class MemoryReader(QObject):
     process_died = pyqtSignal()
     # Signal emitted when potion count is read (-1 for read failure)
     potion_count_updated = pyqtSignal(int)
+    # Signal emitted when maximum potion capacity is read (-1 for read failure)
+    max_potion_count_updated = pyqtSignal(int)
     
     def __init__(self, config, process_name, potion_key="r"):
         """
@@ -247,18 +146,12 @@ class MemoryReader(QObject):
         self._enabled = True
         self._process_running = False
         self._module_base = None
-        self._max_health_initialized = False
-        self._current_health_initialized = False
-        self._last_max_health = 0.0
-        self._last_current_health = 0.0
         self._process_id = None
-        self._last_max_health_chain = None
-        self._last_current_health_chain = None
-        self._potion_count_initialized = False
-        self._last_potion_chain = None
+        self._unreal_reader = None
+        self._unreal_targets = None
+        self._next_unreal_resolution = 0.0
+        self._last_unreal_resolution = None
         self._attachment_notified = False  # Track if we've notified about current attachment
-        self._last_chain_resolution_attempt = 0.0
-        self._chain_resolution_cooldown = 1.0  # 1 second cooldown for chain resolution
         self._last_error_print_time = 0.0
         self._error_print_cooldown = 1.0  # 1 second cooldown for error prints
     
@@ -275,13 +168,10 @@ class MemoryReader(QObject):
         if not running:
             self._close_process()
             self._module_base = None
-            self._max_health_initialized = False
-            self._current_health_initialized = False
-            self._potion_count_initialized = False
             self._process_id = None
-            self._last_max_health_chain = None
-            self._last_current_health_chain = None
-            self._last_potion_chain = None
+            self._unreal_targets = None
+            self._next_unreal_resolution = 0.0
+            self._last_unreal_resolution = None
             self._attachment_notified = False  # Reset so we can notify again on next attachment
     
     def start(self):
@@ -308,18 +198,17 @@ class MemoryReader(QObject):
             except Exception:
                 pass
             self._pm = None
+        self._unreal_reader = None
+        self._unreal_targets = None
+        self._next_unreal_resolution = 0.0
+        self._last_unreal_resolution = None
     
     def _handle_process_death(self):
         """Handle process death - cleanup state and emit signal."""
         self._close_process()
         self._module_base = None
-        self._max_health_initialized = False
-        self._current_health_initialized = False
-        self._potion_count_initialized = False
         self._process_id = None
-        self._last_max_health_chain = None
-        self._last_current_health_chain = None
-        self._last_potion_chain = None
+        self._last_unreal_resolution = None
         self._attachment_notified = False
         if self._process_running:
             self.process_died.emit()
@@ -333,7 +222,7 @@ class MemoryReader(QObject):
                 try:
                     # Try to read a small amount of memory to verify process is still alive
                     # This will raise ProcessNotFound if process died
-                    _ = self._pm.read_bytes(self._pm.process_base, 1)
+                    _ = self._pm.read_bytes(self._module_base, 1)
                     # Process is still alive, just ensure process ID is cached
                     if self._process_id is None:
                         self._process_id = self._pm.process_id
@@ -351,6 +240,8 @@ class MemoryReader(QObject):
             if self._module_base is None:
                 self._close_process()
                 return False
+
+            self._unreal_reader = UnrealReflectionReader(self._pm, self._module_base)
             
             # Successfully attached - emit signal only once per attachment session
             if not self._attachment_notified:
@@ -362,361 +253,90 @@ class MemoryReader(QObject):
             self._handle_process_death()
             return False
         except Exception as e:
+            now = time.time()
+            if now - self._last_error_print_time >= self._error_print_cooldown:
+                print(f"Unable to initialize Unreal reflection reader: {e}")
+                self._last_error_print_time = now
             self._close_process()
             return False
     
-    def _initialize_max_health_pointer(self):
-        """
-        Initialize and print max health pointer debug information once.
-        This method prints all debug info when first successfully reading max health.
-        """
-        if self._max_health_initialized:
-            return
-        
-        # Throttle chain resolution attempts to once per second
-        current_time = time.time()
-        if current_time - self._last_chain_resolution_attempt < self._chain_resolution_cooldown:
-            return  # Skip this attempt, wait for cooldown
-        self._last_chain_resolution_attempt = current_time
-        
+    def _resolve_unreal_targets(self):
+        """Refresh object/property addresses from live Unreal reflection."""
+        now = time.monotonic()
+        if now < self._next_unreal_resolution:
+            return self._unreal_targets
+        self._next_unreal_resolution = now + 0.25
+
+        if self._unreal_reader is None:
+            self._unreal_targets = None
+            return None
+
         try:
-            if self._pm is None or self._module_base is None:
-                return
-            
-            print("Max_health pointer:")
-            print(f"[OK] Module: {self.process_name} | Base address: {hex(self._module_base)}")
-            
-            # Get base offset and offsets from config
-            base_offset_str = self.config.get_max_health_base_offset()
-            offsets_str = self.config.get_max_health_offsets()
-            
-            # Parse base offset
-            base_offset = parse_address(base_offset_str)
-            if base_offset == 0:
-                print("[ERROR] Invalid max health base offset")
-                return
-            
-            # Parse offsets list
-            offsets = parse_offsets(offsets_str)
-            if not offsets:
-                print("[ERROR] Invalid max health offsets")
-                return
-            
-            # Calculate base address (module_base + base_offset)
-            base_address = self._module_base + base_offset
-            
-            # Follow pointer chain
-            try:
-                final_address, chain_addresses = read_pointer_chain(self._pm, base_address, offsets, return_chain=True)
-                
-                # Check if pointer chain path changed (excluding final address)
-                current_pointer_path = tuple(chain_addresses[:-1])
-                if self._last_max_health_chain != current_pointer_path:
-                    print("[DEBUG] Max health pointer chain resolved:")
-                    print(f"  Step 0: addr=0x{chain_addresses[0]:X}")
-                    for i, (addr, offset) in enumerate(zip(chain_addresses[1:], offsets), 1):
-                        print(f"  Step {i}: addr=0x{addr:X} offset=0x{offset:X}")
-                    self._last_max_health_chain = current_pointer_path
-                
-                print(f"[OK] Final address: {hex(final_address)}")
-            except RuntimeError as e:
-                print(f"[ERROR] {e}")
-                return
-            
-            # Read double value (8 bytes)
-            try:
-                max_health = read_memory_double(self._pm, final_address)
-                if max_health > 0:
-                    print(f"[RESULT] Player Max Health: {max_health}")
-                    self._max_health_initialized = True
-                    print("-------------")
-            except Exception as e:
-                print(f"[ERROR] Failed to read final double value: {e}")
-                
-        except Exception as e:
-            print(f"[ERROR] Error initializing max health pointer: {e}")
-    
-    def _read_max_health(self) -> float:
-        """
-        Read max health using pointer chain.
-        
-        Returns:
-            Max health value (float) or 0.0 on error
-        """
+            targets = self._unreal_reader.resolve()
+            self._unreal_targets = targets
+            signature = (
+                targets["world"],
+                targets["controller"],
+                targets["pawn"],
+                targets["potion_manager"],
+            )
+            if signature != self._last_unreal_resolution:
+                print(
+                    "[OK] Unreal reflection resolved: "
+                    f"{targets['pawn_class']} health + "
+                    f"{targets['manager_class']} potion state"
+                )
+                self._last_unreal_resolution = signature
+            return targets
+        except Exception as exc:
+            self._unreal_targets = None
+            error_time = time.time()
+            if error_time - self._last_error_print_time >= self._error_print_cooldown:
+                print(f"[ERROR] Unreal reflection discovery failed: {exc}")
+                self._last_error_print_time = error_time
+            return None
+
+    def _read_game_state(self):
+        """Read health and potion values from the resolved reflected fields."""
+        targets = self._resolve_unreal_targets()
+        if targets is None or self._pm is None:
+            return 0.0, -1.0, -1, -1
+
         try:
-            if self._pm is None or self._module_base is None:
-                return 0.0
-            
-            # Initialize debug output once
-            if not self._max_health_initialized:
-                self._initialize_max_health_pointer()
-            
-            # Get base offset and offsets from config
-            base_offset_str = self.config.get_max_health_base_offset()
-            offsets_str = self.config.get_max_health_offsets()
-            
-            # Parse base offset
-            base_offset = parse_address(base_offset_str)
-            if base_offset == 0:
-                return 0.0
-            
-            # Parse offsets list
-            offsets = parse_offsets(offsets_str)
-            if not offsets:
-                return 0.0
-            
-            # Calculate base address (module_base + base_offset)
-            base_address = self._module_base + base_offset
-            
-            # Follow pointer chain
-            final_address = read_pointer_chain(self._pm, base_address, offsets)
-            
-            # Read double value (8 bytes)
-            max_health = read_memory_double(self._pm, final_address)
-            
-            return max_health
-        except RuntimeError:
-            # Null pointer or invalid address - expected when pointer chain changes (e.g., moving areas)
-            # Silently ignore and return 0.0 - don't treat as process death
-            return 0.0
-        except Exception as e:
-            # Other errors - only print during initialization to avoid spam
-            if not self._max_health_initialized:
-                current_time = time.time()
-                if current_time - self._last_error_print_time >= self._error_print_cooldown:
-                    print(f"[ERROR] Error reading max health: {e}")
-                    self._last_error_print_time = current_time
-            return 0.0
-    
-    def _initialize_current_health_pointer(self):
-        """
-        Initialize and print current health pointer debug information once.
-        This method prints all debug info when first successfully reading current health.
-        """
-        if self._current_health_initialized:
-            return
-        
-        # Throttle chain resolution attempts to once per second
-        current_time = time.time()
-        if current_time - self._last_chain_resolution_attempt < self._chain_resolution_cooldown:
-            return  # Skip this attempt, wait for cooldown
-        self._last_chain_resolution_attempt = current_time
-        
-        try:
-            if self._pm is None or self._module_base is None:
-                return
-            
-            print("Current_health pointer:")
-            print(f"[OK] Module: {self.process_name} | Base address: {hex(self._module_base)}")
-            
-            # Get base offset and offsets from config
-            base_offset_str = self.config.get_current_health_base_offset()
-            offsets_str = self.config.get_current_health_offsets()
-            
-            # Parse base offset
-            base_offset = parse_address(base_offset_str)
-            if base_offset == 0:
-                print("[ERROR] Invalid current health base offset")
-                return
-            
-            # Parse offsets list
-            offsets = parse_offsets(offsets_str)
-            if not offsets:
-                print("[ERROR] Invalid current health offsets")
-                return
-            
-            # Calculate base address (module_base + base_offset)
-            base_address = self._module_base + base_offset
-            
-            # Follow pointer chain
-            try:
-                final_address, chain_addresses = read_pointer_chain(self._pm, base_address, offsets, return_chain=True)
-                
-                # Check if pointer chain path changed (excluding final address)
-                current_pointer_path = tuple(chain_addresses[:-1])
-                if self._last_current_health_chain != current_pointer_path:
-                    print("[DEBUG] Current health pointer chain resolved:")
-                    print(f"  Step 0: addr=0x{chain_addresses[0]:X}")
-                    for i, (addr, offset) in enumerate(zip(chain_addresses[1:], offsets), 1):
-                        print(f"  Step {i}: addr=0x{addr:X} offset=0x{offset:X}")
-                    self._last_current_health_chain = current_pointer_path
-                
-                print(f"[OK] Final address: {hex(final_address)}")
-            except RuntimeError as e:
-                print(f"[ERROR] {e}")
-                return
-            
-            # Read double value (8 bytes)
-            try:
-                current_health = read_memory_double(self._pm, final_address)
-                if current_health >= 0:  # Allow 0.0 as valid value
-                    print(f"[RESULT] Player Current Health: {current_health}")
-                    self._current_health_initialized = True
-                    print("--------------")
-            except Exception as e:
-                print(f"[ERROR] Failed to read final double value: {e}")
-                
-        except Exception as e:
-            print(f"[ERROR] Error initializing current health pointer: {e}")
-    
-    def _initialize_potion_pointer(self):
-        """
-        Initialize and print potion pointer debug information once.
-        Prints all debug info when first successfully reading potion count.
-        """
-        if self._potion_count_initialized:
-            return
-        
-        current_time = time.time()
-        if current_time - self._last_chain_resolution_attempt < self._chain_resolution_cooldown:
-            return
-        self._last_chain_resolution_attempt = current_time
-        
-        try:
-            if self._pm is None or self._module_base is None:
-                return
-            
-            print("Potion pointer:")
-            print(f"[OK] Module: {self.process_name} | Base address: {hex(self._module_base)}")
-            
-            base_offset_str = self.config.get_potion_base_offset()
-            offsets_str = self.config.get_potion_offsets()
-            
-            base_offset = parse_address(base_offset_str)
-            if base_offset == 0:
-                print("[ERROR] Invalid potion base offset")
-                return
-            
-            offsets = parse_offsets(offsets_str)
-            if not offsets:
-                print("[ERROR] Invalid potion offsets")
-                return
-            
-            base_address = self._module_base + base_offset
-            
-            try:
-                final_address, chain_addresses = read_pointer_chain(self._pm, base_address, offsets, return_chain=True)
-                
-                current_pointer_path = tuple(chain_addresses[:-1])
-                if self._last_potion_chain != current_pointer_path:
-                    print("[DEBUG] Potion pointer chain resolved:")
-                    print(f"  Step 0: addr=0x{chain_addresses[0]:X}")
-                    for i, (addr, offset) in enumerate(zip(chain_addresses[1:], offsets), 1):
-                        print(f"  Step {i}: addr=0x{addr:X} offset=0x{offset:X}")
-                    self._last_potion_chain = current_pointer_path
-                
-                print(f"[OK] Final address: {hex(final_address)}")
-            except RuntimeError as e:
-                print(f"[ERROR] {e}")
-                return
-            
-            try:
-                potion_count = read_memory_int(self._pm, final_address)
-                if potion_count >= 0:
-                    print(f"[RESULT] Player Potion Count: {potion_count}")
-                    self._potion_count_initialized = True
-                    print("-------------")
-            except Exception as e:
-                print(f"[ERROR] Failed to read final int value: {e}")
-                
-        except Exception as e:
-            print(f"[ERROR] Error initializing potion pointer: {e}")
-    
-    def _read_current_health(self) -> float:
-        """
-        Read current health using pointer chain.
-        
-        Returns:
-            Current health value (float) or 0.0 on error
-        """
-        try:
-            if self._pm is None or self._module_base is None:
-                return 0.0
-            
-            # Initialize debug output once
-            if not self._current_health_initialized:
-                self._initialize_current_health_pointer()
-            
-            # Get base offset and offsets from config
-            base_offset_str = self.config.get_current_health_base_offset()
-            offsets_str = self.config.get_current_health_offsets()
-            
-            # Parse base offset
-            base_offset = parse_address(base_offset_str)
-            if base_offset == 0:
-                return 0.0
-            
-            # Parse offsets list
-            offsets = parse_offsets(offsets_str)
-            if not offsets:
-                return 0.0
-            
-            # Calculate base address (module_base + base_offset)
-            base_address = self._module_base + base_offset
-            
-            # Follow pointer chain
-            final_address = read_pointer_chain(self._pm, base_address, offsets)
-            
-            # Read double value (8 bytes)
-            current_health = read_memory_double(self._pm, final_address)
-            
-            return current_health
-        except RuntimeError:
-            # Null pointer or invalid address - expected when pointer chain changes (e.g., moving areas)
-            # Silently ignore and return 0.0 - don't treat as process death
-            return 0.0
-        except Exception as e:
-            # Other errors - only print during initialization to avoid spam
-            if not self._current_health_initialized:
-                current_time = time.time()
-                if current_time - self._last_error_print_time >= self._error_print_cooldown:
-                    print(f"[ERROR] Error reading current health: {e}")
-                    self._last_error_print_time = current_time
-            return 0.0
-    
-    def _read_potion_count(self) -> int:
-        """
-        Read potion count using pointer chain.
-        
-        Returns:
-            Potion count (int >= 0) on success, -1 on read failure
-        """
-        try:
-            if self._pm is None or self._module_base is None:
-                return -1
-            
-            if not self._potion_count_initialized:
-                self._initialize_potion_pointer()
-            
-            base_offset_str = self.config.get_potion_base_offset()
-            offsets_str = self.config.get_potion_offsets()
-            
-            base_offset = parse_address(base_offset_str)
-            if base_offset == 0:
-                return -1
-            
-            offsets = parse_offsets(offsets_str)
-            if not offsets:
-                return -1
-            
-            base_address = self._module_base + base_offset
-            
-            final_address = read_pointer_chain(self._pm, base_address, offsets)
-            
-            potion_count = read_memory_int(self._pm, final_address)
-            if potion_count < 0:
-                return -1
-            return potion_count
-        except RuntimeError:
-            return -1
-        except Exception as e:
-            if not self._potion_count_initialized:
-                current_time = time.time()
-                if current_time - self._last_error_print_time >= self._error_print_cooldown:
-                    print(f"[ERROR] Error reading potion count: {e}")
-                    self._last_error_print_time = current_time
-            return -1
-    
+            max_health = struct.unpack(
+                "<d", self._pm.read_bytes(targets["max_health"], 8)
+            )[0]
+            current_health = struct.unpack(
+                "<d", self._pm.read_bytes(targets["health"], 8)
+            )[0]
+            current_potions = self._pm.read_int(targets["current_potions"])
+            max_potions = self._pm.read_int(targets["max_potions"])
+
+            if (
+                not math.isfinite(max_health)
+                or not math.isfinite(current_health)
+                or max_health <= 0
+                or max_health > 100000000
+                or current_health < 0
+                or current_health > 100000000
+            ):
+                raise UnrealReflectionError("Health values did not validate")
+            if current_potions < 0 or current_potions > 10000:
+                current_potions = -1
+            if max_potions < 0 or max_potions > 10000:
+                max_potions = -1
+
+            return max_health, current_health, current_potions, max_potions
+        except Exception as exc:
+            # Force a fresh object walk on the next read after a map or pawn change.
+            self._unreal_targets = None
+            self._next_unreal_resolution = 0.0
+            error_time = time.time()
+            if error_time - self._last_error_print_time >= self._error_print_cooldown:
+                print(f"[ERROR] Could not read reflected player state: {exc}")
+                self._last_error_print_time = error_time
+            return 0.0, -1.0, -1, -1
+
     def _use_potion(self):
         """Send potion keypress. Ensures game window is focused first."""
         try:
@@ -750,23 +370,13 @@ class MemoryReader(QObject):
                     time.sleep(0.5)
                     continue
                 
-                # Read max health using pointer chain
-                max_health = self._read_max_health()
-                if max_health > 0:
-                    self._last_max_health = max_health
-                    # Emit signal for overlay to update display
-                    self.max_health_updated.emit(max_health)
-                
-                # Read current health using pointer chain
-                current_health = self._read_current_health()
-                if current_health >= 0:  # Allow 0.0 as valid value
-                    self._last_current_health = current_health
-                    # Emit signal for overlay to update display
-                    self.current_health_updated.emit(current_health)
-                
-                # Read potion count using pointer chain
-                potion_count = self._read_potion_count()
+                # Resolve the object graph once, then read current values from
+                # reflected health and potion properties.
+                max_health, current_health, potion_count, max_potions = self._read_game_state()
+                self.max_health_updated.emit(max_health)
+                self.current_health_updated.emit(current_health)
                 self.potion_count_updated.emit(potion_count)
+                self.max_potion_count_updated.emit(max_potions)
                 
                 # Potion logic
                 if max_health > 0 and current_health >= 0 and potion_count > 0:

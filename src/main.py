@@ -319,6 +319,9 @@ def main():
     
     # Connect potion count signal to overlay
     memory_reader.potion_count_updated.connect(overlay.set_potion_count)
+
+    # Connect maximum potion capacity signal to overlay
+    memory_reader.max_potion_count_updated.connect(overlay.set_max_potion_count)
     
     # Register hotkeys (will print hotkeys inside register_hotkeys())
     hotkey_manager = HotkeyManager(overlay, app, config)
